@@ -1,0 +1,489 @@
+{
+  "version": 1,
+  "name": "cep a rozpor",
+  "entities": [
+    {
+      "id": "264ce0c8-cb69-440f-9d6f-f49dd0cd94b5",
+      "type": "region",
+      "layer": "panels",
+      "name": "Converted panel",
+      "closed": true,
+      "polygons": [
+        [
+          [
+            {
+              "x": 0,
+              "y": -250
+            },
+            {
+              "x": 40,
+              "y": -250
+            },
+            {
+              "x": 40,
+              "y": 0
+            },
+            {
+              "x": 27,
+              "y": 0
+            },
+            {
+              "x": 27,
+              "y": -40
+            },
+            {
+              "x": 13,
+              "y": -40
+            },
+            {
+              "x": 13,
+              "y": 0
+            },
+            {
+              "x": 0,
+              "y": 0
+            }
+          ]
+        ]
+      ],
+      "booleanOperation": "difference",
+      "curveTolerance": 0.001,
+      "stockPoints": [
+        {
+          "x": 0,
+          "y": 0
+        },
+        {
+          "x": 40,
+          "y": 0
+        },
+        {
+          "x": 40,
+          "y": -250
+        },
+        {
+          "x": 0,
+          "y": -250
+        }
+      ],
+      "part": {
+        "thickness": 18,
+        "material": "Masiv – podélný řez",
+        "quantity": 1,
+        "banding": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "materialKind": "solid-long"
+      },
+      "cutListEnabled": false
+    },
+    {
+      "id": "703a82bc-4b1e-4518-b1a1-8262e3f602bb",
+      "layer": "panels",
+      "type": "panel",
+      "points": [
+        {
+          "x": 60,
+          "y": 0
+        },
+        {
+          "x": 100,
+          "y": 0
+        },
+        {
+          "x": 100,
+          "y": -250
+        },
+        {
+          "x": 60,
+          "y": -250
+        }
+      ],
+      "closed": true,
+      "name": "Converted panel",
+      "thickness": 18,
+      "material": "",
+      "quantity": 1,
+      "banding": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "cutListEnabled": false,
+      "materialKind": "solid-long"
+    },
+    {
+      "id": "53a69c36-5484-4f2c-a8de-e67197623444",
+      "layer": "panels",
+      "type": "panel",
+      "points": [
+        {
+          "x": 0,
+          "y": 20
+        },
+        {
+          "x": 40,
+          "y": 20
+        },
+        {
+          "x": 40,
+          "y": 60
+        },
+        {
+          "x": 0,
+          "y": 60
+        }
+      ],
+      "closed": true,
+      "name": "Converted panel",
+      "thickness": 18,
+      "material": "Masiv – příčný řez",
+      "quantity": 1,
+      "banding": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "cutListEnabled": false,
+      "materialKind": "solid-cross",
+      "groupId": "7026924b-67f7-4f70-a222-a50b8b2e5cf3",
+      "groupName": "Skupina objektů"
+    },
+    {
+      "id": "6471657b-4f8e-4c25-a2a3-9833f82c0f28",
+      "layer": "panels",
+      "type": "panel",
+      "points": [
+        {
+          "x": 13,
+          "y": 20
+        },
+        {
+          "x": 27,
+          "y": 20
+        },
+        {
+          "x": 27,
+          "y": 60
+        },
+        {
+          "x": 13,
+          "y": 60
+        }
+      ],
+      "closed": true,
+      "name": "Converted panel",
+      "thickness": 18,
+      "material": "Oak plywood",
+      "quantity": 1,
+      "banding": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "cutListEnabled": false,
+      "groupId": "7026924b-67f7-4f70-a222-a50b8b2e5cf3",
+      "groupName": "Skupina objektů"
+    },
+    {
+      "id": "fae8200e-f2d8-43a7-afff-cf37595da4ce",
+      "layer": "panels",
+      "type": "dimension",
+      "points": [
+        {
+          "x": 40,
+          "y": 60
+        },
+        {
+          "x": 27,
+          "y": 60
+        },
+        {
+          "x": 28,
+          "y": 70
+        }
+      ],
+      "mode": "aligned"
+    },
+    {
+      "id": "3cd44ed4-6d67-4636-9ac3-a4a0be2bcdc6",
+      "layer": "panels",
+      "type": "dimension",
+      "points": [
+        {
+          "x": 27,
+          "y": 60
+        },
+        {
+          "x": 13,
+          "y": 60
+        },
+        {
+          "x": 14,
+          "y": 70
+        }
+      ],
+      "mode": "aligned"
+    },
+    {
+      "id": "86fc7730-f5d4-4158-b136-f81262ce35b1",
+      "layer": "panels",
+      "type": "dimension",
+      "points": [
+        {
+          "x": 13,
+          "y": 60
+        },
+        {
+          "x": 0,
+          "y": 60
+        },
+        {
+          "x": 1,
+          "y": 70
+        }
+      ],
+      "mode": "aligned"
+    },
+    {
+      "id": "2c1261ae-51f0-4adf-b179-2cbce5fdffd0",
+      "layer": "panels",
+      "type": "dimension",
+      "points": [
+        {
+          "x": 40,
+          "y": 60
+        },
+        {
+          "x": 40,
+          "y": 20
+        },
+        {
+          "x": 50,
+          "y": 21
+        }
+      ],
+      "mode": "aligned"
+    },
+    {
+      "id": "4ddd0ed4-3ae3-4c70-9c5c-f1648862af19",
+      "layer": "panels",
+      "type": "dimension",
+      "points": [
+        {
+          "x": 100,
+          "y": 0
+        },
+        {
+          "x": 100,
+          "y": -250
+        },
+        {
+          "x": 110,
+          "y": -245
+        }
+      ],
+      "mode": "aligned"
+    },
+    {
+      "id": "12b10e0f-45eb-43fd-b23a-d391c6159eaf",
+      "layer": "panels",
+      "type": "dimension",
+      "points": [
+        {
+          "x": 13,
+          "y": -40
+        },
+        {
+          "x": 13,
+          "y": 0
+        },
+        {
+          "x": -9.999724288859774,
+          "y": 0
+        }
+      ],
+      "mode": "aligned"
+    },
+    {
+      "id": "7186a731-f4f1-4ef3-a37d-6b7fb09f9bcf",
+      "layer": "panels",
+      "type": "dimension",
+      "points": [
+        {
+          "x": 200,
+          "y": -40
+        },
+        {
+          "x": 213,
+          "y": -40
+        },
+        {
+          "x": 221,
+          "y": 20
+        }
+      ],
+      "mode": "aligned"
+    },
+    {
+      "id": "0f556b14-a07d-4280-be6c-f046bfa31297",
+      "layer": "panels",
+      "type": "dimension",
+      "points": [
+        {
+          "x": 213,
+          "y": 0
+        },
+        {
+          "x": 227,
+          "y": 0
+        },
+        {
+          "x": 227,
+          "y": 19.95551302083816
+        }
+      ],
+      "mode": "aligned"
+    },
+    {
+      "id": "3509a730-d65c-4574-b4a6-ac065926c081",
+      "layer": "panels",
+      "type": "dimension",
+      "points": [
+        {
+          "x": 240,
+          "y": -40
+        },
+        {
+          "x": 227,
+          "y": -40
+        },
+        {
+          "x": 227,
+          "y": 19.95551302083816
+        }
+      ],
+      "mode": "aligned"
+    },
+    {
+      "id": "e16f504d-41af-4392-8e32-c6465e1c6279",
+      "layer": "panels",
+      "type": "dimension",
+      "points": [
+        {
+          "x": 240,
+          "y": -40
+        },
+        {
+          "x": 240,
+          "y": -250
+        },
+        {
+          "x": 255,
+          "y": -243
+        }
+      ],
+      "mode": "aligned"
+    },
+    {
+      "id": "a3cd5f7c-e41d-4b02-a1d0-c29dd5a39c51",
+      "layer": "panels",
+      "type": "polyline",
+      "points": [
+        {
+          "x": 200,
+          "y": -250
+        },
+        {
+          "x": 200,
+          "y": -40
+        },
+        {
+          "x": 213,
+          "y": -40
+        },
+        {
+          "x": 213,
+          "y": 0
+        },
+        {
+          "x": 227,
+          "y": 0
+        },
+        {
+          "x": 227,
+          "y": -40
+        },
+        {
+          "x": 240,
+          "y": -40
+        },
+        {
+          "x": 240,
+          "y": -250
+        }
+      ],
+      "closed": true,
+      "thickness": 40,
+      "quantity": 2,
+      "banding": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "material": "Masiv – podélný řez",
+      "materialKind": "solid-long"
+    }
+  ],
+  "layers": [
+    {
+      "id": "panels",
+      "name": "Vrstva 1",
+      "color": "#abd3b5",
+      "visible": true,
+      "locked": false
+    }
+  ],
+  "view": {
+    "zoom": 2.107984491237285,
+    "origin": {
+      "x": 635.864605983652,
+      "y": 206.58432866271215
+    }
+  },
+  "settings": {
+    "titleBlock": {
+      "title": "",
+      "number": "test",
+      "author": "test",
+      "checked": "test",
+      "date": "test",
+      "revision": "test",
+      "company": "test",
+      "material": "test"
+    },
+    "dimensionTermination": "filled",
+    "units": "mm",
+    "dimensionTextHeight": 2.5,
+    "grid": true,
+    "object": true,
+    "ortho": true,
+    "gridSize": 1,
+    "snapModes": {
+      "endpoint": true,
+      "midpoint": true,
+      "center": true,
+      "intersection": true,
+      "perpendicular": true,
+      "parallel": true
+    }
+  },
+  "customCutlist": []
+}

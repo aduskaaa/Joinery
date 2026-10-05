@@ -120,6 +120,29 @@
     return pts;
   }
   function vertices(e) {
+    if (e.type === "detail")
+      return [
+        ...vertices({ type: "circle", center: e.center, radius: e.radius }),
+        ...vertices({
+          type: "circle",
+          center: e.points[0],
+          radius: e.radius * e.factor,
+        }),
+      ];
+    if (e.bulges?.some(Boolean) && Joinery.GeometryEngine) {
+      const out = [],
+        n = e.closed ? e.points.length : e.points.length - 1;
+      for (let i = 0; i < n; i++)
+        out.push(
+          ...Joinery.GeometryEngine.GeometryEngine.bulgePoints(
+            e.points[i],
+            e.points[(i + 1) % e.points.length],
+            e.bulges[i] || 0,
+          ).slice(0, -1),
+        );
+      if (!e.closed) out.push(e.points.at(-1));
+      return out;
+    }
     if (e.type === "region") return e.polygons.flat(2);
     if (e.type === "slot") return slotPoints(e.points[0], e.points[1], e.width);
     if (e.type === "arc") return arcPoints(e);
@@ -140,9 +163,16 @@
         ),
       );
     if (
-      !["line", "polyline", "rectangle", "panel", "cutout", "slot"].includes(
-        e.type,
-      )
+      ![
+        "line",
+        "polyline",
+        "rectangle",
+        "panel",
+        "cutout",
+        "slot",
+        "arc",
+        "leader",
+      ].includes(e.type)
     )
       return [];
     const pts = vertices(e),
@@ -223,6 +253,14 @@
     );
   }
   function hitDistance(e, p) {
+    if (e.type === "detail")
+      return Math.min(
+        Math.abs(distance(p, e.center) - e.radius),
+        Math.abs(distance(p, e.points[0]) - e.radius * e.factor),
+        ...Joinery.GeometryEngine.GeometryEngine.detailEntities(e)
+          .filter((c) => !c.detailFill)
+          .map((c) => hitDistance(c, p)),
+      );
     if (["circle", "drill", "arc"].includes(e.type)) {
       if (
         e.type === "arc" &&
@@ -253,6 +291,18 @@
   function transformEntity(e, fn) {
     const copy = structuredClone(e);
     if (copy.points) copy.points = copy.points.map(fn);
+    if (copy.grainVector) copy.grainVector = copy.grainVector.map(fn);
+    if (copy.bulges) {
+      const a = fn({ x: 0, y: 0 }),
+        b = fn({ x: 1, y: 0 }),
+        c = fn({ x: 0, y: 1 });
+      if (cross(sub(b, a), sub(c, a)) < 0)
+        copy.bulges = copy.bulges.map((v) => -v);
+    }
+    if (copy.target) copy.target = fn(copy.target);
+    if (copy.type === "detail") {
+      copy.contents = copy.contents.map((e) => transformEntity(e, fn));
+    }
     if (copy.polygons)
       copy.polygons = copy.polygons.map((polygon) =>
         polygon.map((ring) => ring.map(fn)),
@@ -345,18 +395,44 @@
       symbols,
       points: [pa, pb],
       label: add(midpoint(pa, pb), mul(outward, paperScale * 4)),
-      value: Math.abs(signed),
+      value: Math.abs(signed) / (e.measurementFactor || 1),
     };
   }
   function offsetEntity(e, amount) {
+    if (!Number.isFinite(amount) || e.bulges?.some(Boolean)) return null;
     if (["circle", "drill"].includes(e.type))
       return e.radius + amount > EPS
         ? { ...structuredClone(e), radius: e.radius + amount }
         : null;
     const edges = segments(e);
     if (e.type === "line") {
+      if (distance(e.points[0], e.points[1]) <= EPS) return null;
       const n = mul(perpendicular(unit(sub(e.points[1], e.points[0]))), amount);
       return transformEntity(e, (p) => add(p, n));
+    }
+    if (e.type === "polyline" && !e.closed) {
+      if (!edges.length || edges.some(([a, b]) => distance(a, b) <= EPS))
+        return null;
+      const shifted = edges.map(([a, b]) => {
+        const n = mul(perpendicular(unit(sub(b, a))), amount);
+        return [add(a, n), add(b, n)];
+      });
+      const next = [shifted[0][0]];
+      for (let i = 1; i < shifted.length; i++) {
+        const previous = shifted[i - 1],
+          current = shifted[i];
+        const p = intersection(...previous, ...current, true, true);
+        // Collinear segments share a shifted vertex; a reversal has no
+        // well-defined miter and is rejected rather than fabricating a path.
+        if (p) next.push(p);
+        else if (distance(previous[1], current[0]) <= EPS)
+          next.push(current[0]);
+        else return null;
+      }
+      next.push(shifted.at(-1)[1]);
+      if (next.some((p) => !Number.isFinite(p.x) || !Number.isFinite(p.y)))
+        return null;
+      return { ...structuredClone(e), points: next, closed: false };
     }
     if (
       !["panel", "rectangle", "cutout", "polyline"].includes(e.type) ||
@@ -401,10 +477,10 @@
       closed: true,
     };
   }
-  function adaptiveSpacing(zoom, targetPixels = 36) {
-    const raw = targetPixels / zoom,
+  function adaptiveSpacing(zoom, targetPixels = 36, gridSize = 1) {
+    const raw = Math.max(1, targetPixels / (zoom * gridSize)),
       base = 10 ** Math.floor(Math.log10(raw));
-    return [1, 2, 5, 10].map((n) => n * base).find((n) => n >= raw);
+    return gridSize * [1, 2, 5, 10].map((n) => n * base).find((n) => n >= raw);
   }
   /** OSNAP pick tolerance comes from screen pixels; grid snap spacing is explicit. */
   function snapPoint(p, entities, options = {}) {
@@ -412,6 +488,8 @@
       tolerance = 10,
       grid = false,
       gridSize = 10,
+      gridOrigin = { x: 0, y: 0 },
+      gridPriority = false,
       object = true,
       base = null,
       ortho = false,
@@ -423,6 +501,26 @@
         Math.abs(p.x - base.x) >= Math.abs(p.y - base.y)
           ? { x: p.x, y: base.y }
           : { x: base.x, y: p.y };
+    const gridPoint = {
+      x:
+        gridOrigin.x +
+        Math.round((constrained.x - gridOrigin.x) / gridSize) * gridSize,
+      y:
+        gridOrigin.y +
+        Math.round((constrained.y - gridOrigin.y) / gridSize) * gridSize,
+    };
+    const snapGrid = () => {
+      let point = gridPoint;
+      if (ortho && base)
+        point =
+          Math.abs(p.x - base.x) >= Math.abs(p.y - base.y)
+            ? { x: point.x, y: base.y }
+            : { x: base.x, y: point.y };
+      return { point, kind: "Grid", distance: distance(constrained, point) };
+    };
+    // Explicit grid placement wins over nearby objects. Moving uses a grid
+    // anchored at the base point, so an off-grid part retains its geometry.
+    if (grid && gridPriority) return snapGrid();
     const candidates = [],
       allEdges = [],
       circles = [];
@@ -484,7 +582,12 @@
         if (base && !ortho && modes.parallel !== false)
           edges.forEach(([a, b]) =>
             push(
-              projectPoint(constrained, base, add(base, sub(b, a)), false),
+              projectPoint(
+                grid ? gridPoint : constrained,
+                base,
+                add(base, sub(b, a)),
+                false,
+              ),
               "Parallel",
               -1,
             ),
@@ -530,18 +633,7 @@
         (b.distance - b.priority * tolerance * 0.08),
     );
     if (candidates.length) return candidates[0];
-    if (grid) {
-      let q = {
-        x: Math.round(constrained.x / gridSize) * gridSize,
-        y: Math.round(constrained.y / gridSize) * gridSize,
-      };
-      if (ortho && base)
-        q =
-          Math.abs(p.x - base.x) >= Math.abs(p.y - base.y)
-            ? { x: q.x, y: base.y }
-            : { x: base.x, y: q.y };
-      return { point: q, kind: "Grid", distance: distance(constrained, q) };
-    }
+    if (grid) return snapGrid();
     return {
       point: constrained,
       kind: ortho && base ? "Ortho" : "",

@@ -35,14 +35,15 @@
     return result;
   }
   function primitives(e, paperScale = 1, textHoles = []) {
-    const spec = e.type === "region" ? e.part : e,
+    const spec = e.part || e,
       material = J.Materials.kind(spec?.materialKind);
     if (
-      !material ||
+      !material || e.symbolType || (e.type === "polyline" && !e.closed) ||
       !["panel", "region", "rectangle", "polyline"].includes(e.type)
     )
       return [];
-    let polygons = e.type === "region" ? e.polygons : [[e.points]],
+    let polygons =
+        e.type === "region" ? e.polygons : [[J.Geometry.vertices(e)]],
       points = polygons.flat(2),
       stock = e.stockPoints || e.points;
     if (textHoles && textHoles.length > 0) {
@@ -58,72 +59,90 @@
         return !(rMaxX < minX || rMinX > maxX || rMaxY < minY || rMinY > maxY);
       });
       if (relevant.length > 0) {
-        polygons = polygons.map((poly) => [poly[0], ...poly.slice(1), ...relevant]);
+        polygons = polygons.map((poly) => [
+          poly[0],
+          ...poly.slice(1),
+          ...relevant,
+        ]);
       }
     }
-    let direction =
-      stock?.length >= 4 ? unit(sub(stock[1], stock[0])) : { x: 1, y: 0 };
-    if (
-      material.pattern === "longitudinal" &&
-      stock?.length >= 4 &&
-      J.Geometry.distance(stock[0], stock[1]) <
-        J.Geometry.distance(stock[1], stock[2])
-    )
-      direction = perpendicular(direction);
-    if (["diagonal", "glass"].includes(material.pattern))
-      direction = unit(add(direction, perpendicular(direction)));
-    else if (["board", "laminate"].includes(material.pattern))
-      direction = perpendicular(direction);
-    const n = perpendicular(direction),
-      along = points.map((p) => dot(p, direction)),
-      across = points.map((p) => dot(p, n)),
-      lo = Math.min(...across),
-      hi = Math.max(...across),
-      u0 = Math.min(...along) - 1,
-      u1 = Math.max(...along) + 1;
-    // Bound tessellation during far zoom-out and on large imported geometry.
-    const spacing = Math.max(
-        paperScale * (material.pattern === "glass" ? 8 : 3),
-        (hi - lo) / 400,
-      ),
-      lines = [];
-    function line(t) {
-      const a = add(mul(direction, u0), mul(n, t)),
-        b = add(mul(direction, u1), mul(n, t));
-      for (const segment of clip(a, b, polygons))
-        if (lines.length < 1600)
-          lines.push({
-            kind: "path",
-            points: segment,
-            thin: true,
-            hatch: true,
-          });
+    const edges=(stock?.length>=4?stock:polygons[0][0]).map((p,i,pts)=>[p,pts[(i+1)%pts.length]])
+      .sort((a,b)=>J.Geometry.distance(...b)-J.Geometry.distance(...a));
+    const axis=edges.length?unit(sub(edges[0][1],edges[0][0])):{x:1,y:0},normal=perpendicular(axis);
+    const lines=[], maxPrimitives=1600;
+    function emit(points, extra={}) {
+      if(lines.length<maxPrimitives)lines.push({kind:"path",points,thin:true,hatch:true,...extra});
     }
-    for (let t = Math.ceil(lo / spacing) * spacing; t < hi; t += spacing) {
-      line(t);
-      if (material.pattern === "glass") {
-        line(t + paperScale * 0.7);
-        line(t + paperScale * 1.4);
+    function clippedPath(points,extra={}) {
+      let chain=[];
+      const flush=()=>{if(chain.length>1)emit(chain,extra);chain=[];};
+      for(let i=1;i<points.length;i++){
+        const segments=clip(points[i-1],points[i],polygons);
+        if(!segments.length)flush();
+        for(const [a,b] of segments){
+          if(chain.length && J.Geometry.distance(chain.at(-1),a)<1e-6)chain.push(b);
+          else {flush();chain=[a,b];}
+        }
+      }
+      flush();
+    }
+    function family(angle,style="straight",factor=1) {
+      const radians=angle*Math.PI/180, direction=add(mul(axis,Math.cos(radians)),mul(normal,Math.sin(radians))),n=perpendicular(direction),
+        along=points.map(p=>dot(p,direction)),across=points.map(p=>dot(p,n)),lo=Math.min(...across),hi=Math.max(...across),u0=Math.min(...along)-paperScale,u1=Math.max(...along)+paperScale,
+        spacing=Math.max(paperScale*(spec.hatchSpacing||3)*factor,(hi-lo)/300),at=(u,t)=>add(mul(direction,u),mul(n,t));
+      let row=0;
+      for(let t=Math.ceil(lo/spacing)*spacing;t<hi && lines.length<maxPrimitives;t+=spacing,row++){
+        if(style==="wave"){
+          const count=Math.min(80,Math.max(8,Math.ceil((u1-u0)/(paperScale*2)))),amplitude=Math.min(spacing*.08,paperScale*.25),wavelength=paperScale*14;
+          const wave=Array.from({length:count+1},(_,i)=>{const u=u0+(u1-u0)*i/count;return at(u,t+amplitude*Math.sin(u/wavelength*2*Math.PI+row*.8));});
+          clippedPath(wave);
+        }else if(style==="stone"){
+          const length=spacing*.9,shift=(row%2)*length;
+          for(let u=u0+shift;u<u1 && lines.length<maxPrimitives;u+=length*2)clippedPath([at(u,t),at(Math.min(u+length,u1),t)]);
+        }else if(style==="putty"){
+          const length=paperScale*.28,shift=(row%2)*spacing*.43;
+          for(let u=u0+shift;u<u1 && lines.length<maxPrimitives;u+=spacing*.75)clippedPath([at(u,t),at(u+length,t+length*(row%3-1))]);
+        }else{
+          clippedPath([at(u0,t),at(u1,t)]);
+          if(style==="paired")clippedPath([at(u0,t+paperScale*.7),at(u1,t+paperScale*.7)]);
+        }
       }
     }
-    if (material.pattern === "laminate" && stock?.length >= 4) {
-      const x = unit(sub(stock[1], stock[0])),
-        y = unit(sub(stock[3], stock[0])),
-        width = J.Geometry.distance(stock[0], stock[1]),
-        height = J.Geometry.distance(stock[0], stock[3]),
-        inset = Math.min(paperScale, width / 4, height / 4);
-      for (const t of [inset, height - inset]) {
-        const a = add(stock[0], add(mul(x, inset), mul(y, t))),
-          b = add(a, mul(x, width - 2 * inset));
-        for (const segment of clip(a, b, polygons))
-          lines.push({
-            kind: "path",
-            points: segment,
-            thin: true,
-            hatch: true,
-          });
+    const sign=spec.hatchReverse?-1:1;
+    switch(material.pattern){
+      case "diagonal":family(45*sign);break;
+      case "longitudinal":family(0,"wave");break;
+      case "glass":family(30*sign,"paired",2.5);break;
+      case "plastic":family(60);family(-60);break;
+      case "rubber":family(0,"straight",.55);family(90,"straight",.55);break;
+      case "stone":family(45,"stone",.7);break;
+      case "putty":family(0,"putty",.65);break;
+      case "insulation":family(90,"wave",.6);break;
+      default:family(90);break;
+    }
+    // Veneer is a thin internal line; foil is a very thick face line (figs 59–61).
+    const face=spec.faceLayer || (material.pattern==="laminate"?"foil":"");
+    const uu=points.map(p=>dot(p,axis)),vv=points.map(p=>dot(p,normal)),a0=Math.min(...uu),a1=Math.max(...uu),v0=Math.min(...vv),v1=Math.max(...vv),
+      at=(u,v)=>add(mul(axis,u),mul(normal,v));
+    if(face){
+      const inset=face==="veneer"?Math.min(.35*paperScale,(v1-v0)/4):paperScale*.001;
+      for(const v of [v0+inset,v1-inset])clippedPath([at(a0,v),at(a1,v)],{hatch:false,materialSymbol:true,lineWeight:face==="foil"?.7:.13});
+    }
+    function grain(where,dir){
+      if(!dir)return;
+      const center=where==="face"?at((a0+a1)/2,v1+paperScale*2.5):at(a0+Math.min(paperScale*5,(a1-a0)/4),(v0+v1)/2),s=Math.min(paperScale*1.5,(v1-v0)/4);
+      const point=(x,y)=>add(center,add(mul(axis,x),mul(normal,y)));
+      if(dir==="cross"){
+        emit([point(-s,-s),point(s,s)],{hatch:false,materialSymbol:true});
+        emit([point(-s,s),point(s,-s)],{hatch:false,materialSymbol:true});
+      }else{
+        const a=point(-2*s,0),b=point(2*s,0);
+        emit([a,b],{hatch:false,materialSymbol:true});
+        emit([point(s,s*.6),b,point(s,-s*.6)],{hatch:false,materialSymbol:true});
       }
     }
+    if(material.id.startsWith("blockboard"))grain("core",spec.coreDirection);
+    if(face==="veneer")grain("face",spec.faceDirection);
     return lines;
   }
   J.Hatching = { primitives, clip };

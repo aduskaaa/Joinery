@@ -7,7 +7,6 @@
     uid,
     groupMembers,
     regroupCopies,
-    demoProject,
     emptyProject,
     normalizeBasicLayers,
     validateProject,
@@ -25,7 +24,6 @@
     perpendicular,
     distance,
     entityCenter,
-    rotatePoint,
     transformEntity,
     offsetEntity,
     dimensionGeometry,
@@ -100,18 +98,26 @@
         move: (p, e) => this.tools.move(p, e),
         dragEnd: (p, e) => this.tools.dragEnd?.(p, e),
         cancel: () => this.tools.cancel(),
+        deleteSelection: () =>
+          this.tab === "design" &&
+          !document.body.classList.contains("print-preview") &&
+          this.deleteSelection(),
         viewChanged: () => {
           this.updateZoom();
           this.scheduleSave();
         },
         gridChanged: (n) => {
-          $("grid-spacing").textContent =
-            `Mřížka ${measure(n, this.project.settings.units)} ${this.project.settings.units}`;
+          const text = `Síť: ${measure(n, this.project.settings.units)} ${this.project.settings.units}`;
+          if ($("grid-spacing").textContent !== text)
+            $("grid-spacing").textContent = text;
         },
       });
       this.tools = new Tools(this);
       this.bind();
+      this.propertyPanel = new Joinery.PropertyPanel.PropertyPanel(this);
+      this.toolSystem = new Joinery.ToolSystem.ToolSystem(this);
       Joinery.Tooltips.install();
+      Joinery.Dropdowns.install();
       this.render();
       this.canvas.restore(this.project.view);
       this.updateToolUI();
@@ -159,7 +165,6 @@
       }
       this.canvas.selected = this.selection;
       this.renderProperties();
-      this.renderParts();
       if (this.tools.active.startsWith("boolean-")) this.updateToolUI();
       this.canvas.invalidate();
     }
@@ -193,6 +198,13 @@
       const normalized = entities.map((e) => ({
         id: uid(),
         layer: this.activeLayer,
+        lineStyle: this.project.settings.defaultLineStyle || "continuous",
+        lineWeight: ["dimension", "angle", "radius", "leader"].includes(e.type)
+          ? 0.18
+          : this.project.settings.defaultLineWeight || 0.35,
+        ...(["panel", "rectangle", "polyline"].includes(e.type)
+          ? { materialKind: this.project.settings.defaultMaterialKind || "" }
+          : {}),
         ...e,
       }));
       for (const e of normalized) {
@@ -214,10 +226,11 @@
       this.project.view = this.canvas.view();
       try {
         localStorage.setItem(STORAGE, JSON.stringify(this.project));
-        $("save-status").innerHTML = '<span class="status-dot"></span>Uloženo';
+        this.storageUnavailable = false;
       } catch {
-        $("save-status").textContent =
-          "Úložiště není dostupné · uložte projekt";
+        if (!this.storageUnavailable)
+          this.toast("Úložiště není dostupné. Uložte projekt přes Export.");
+        this.storageUnavailable = true;
       }
     }
     toast(message) {
@@ -258,7 +271,6 @@
       document
         .querySelectorAll("[data-tab]")
         .forEach((b) => (b.onclick = () => this.setTab(b.dataset.tab)));
-      $("view-cutlist").onclick = () => this.setTab("cutlist");
       $("theme").onclick = () => {
         const next =
           document.documentElement.dataset.theme === "dark" ? "light" : "dark";
@@ -328,14 +340,33 @@
       };
       $("undo").onclick = () => this.undo();
       $("redo").onclick = () => this.undo(true);
-      $("drafting-settings").onclick = () => this.draftingSettings();
       $("help").onclick = () => this.help();
       $("export").onclick = () => this.exportDialog();
+      document.addEventListener("pointerdown", (e) => {
+        if (!e.target.closest(".export-control")) this.closeExportMenu();
+      });
+      document.addEventListener("keydown", (e) => {
+        if ($("export-menu").hidden) return;
+        if (e.key === "Escape") {
+          e.preventDefault();
+          this.closeExportMenu(true);
+        }
+        if (["ArrowDown", "ArrowUp"].includes(e.key)) {
+          e.preventDefault();
+          const buttons = [...$("export-menu").children],
+            i = buttons.indexOf(document.activeElement);
+          buttons[
+            (i + (e.key === "ArrowDown" ? 1 : -1) + buttons.length) %
+              buttons.length
+          ].focus();
+        }
+      });
       $("cutlist-csv").onclick = () => this.exportFile("csv");
       if ($("add-cutlist-item"))
         $("add-cutlist-item").onclick = () => this.addCustomCutlistItem();
       if ($("add-drawing-to-cutlist"))
-        $("add-drawing-to-cutlist").onclick = () => this.addDrawingToCutlistDialog();
+        $("add-drawing-to-cutlist").onclick = () =>
+          this.addDrawingToCutlistDialog();
       $("project-title").ondblclick = (e) => {
         e.preventDefault();
         this.editProjectName();
@@ -383,28 +414,7 @@
           },
           "Přidat vrstvu",
         );
-      $("new-project").onclick = () =>
-        this.dialog(
-          "Nový výkres",
-          `<p class="dialog-note" style="border:0;padding:0;margin:0">Projekt se ukládá v prohlížeči. Pro samostatnou zálohu zvolte Uložit projekt. Změnu lze vrátit.</p><div class="export-options" style="margin-top:20px"><button type="button" class="export-option" data-new="empty"><strong>Prázdný výkres</strong><span>Prázdný výkres s jednou vlastní vrstvou.</span></button><button type="button" class="export-option" data-new="demo"><strong>Ukázková skříň</strong><span>Dílce, otvory, drážka a kóty.</span></button></div>`,
-          () => {
-            document.querySelectorAll("[data-new]").forEach(
-              (b) =>
-                (b.onclick = () => {
-                  this.commit(() => {
-                    this.project = normalizeBasicLayers(
-                      b.dataset.new === "demo" ? demoProject() : emptyProject(),
-                    );
-                    this.selection.clear();
-                    this.activeLayer = this.project.layers[0].id;
-                  });
-                  this.tools.cancel();
-                  this.canvas.fit();
-                  $("app-dialog").close();
-                }),
-            );
-          },
-        );
+      $("new-project").onclick = () => this.requestNewProject();
       $("import").onclick = () => $("file-input").click();
       $("file-input").onchange = (e) => this.importFile(e.target.files[0]);
       $("dialog-close").onclick = () => $("app-dialog").close();
@@ -427,12 +437,14 @@
           this.canvas.space = false;
           this.canvas.canvas.style.cursor = "crosshair";
         }
-        if (e.key === "Shift")
-          this.tools.move(this.tools.pointer, { shiftKey: false });
+        if (["Shift", "Control", "Meta"].includes(e.key))
+          this.tools.move(this.tools.pointer, e);
       });
       window.addEventListener("pagehide", () => this.save());
     }
     chooseTool(id) {
+      if (["rotate", "mirror", "edge", "node"].includes(id)) return;
+      if (id === "panel") id = "rectangle";
       this.setTab("design");
       if (id === "boolean") {
         this.booleanMenu();
@@ -527,6 +539,12 @@
       container.textContent = this.project.name;
     }
     render() {
+      if (
+        this.toolSystem?.pendingPick &&
+        this.toolSystem.pendingPick.project !== this.project
+      )
+        this.toolSystem.cancelPick();
+      this.canvas?.invalidateScene();
       this.renderProjectTitle();
 
       $("units").value = this.project.settings.units;
@@ -535,7 +553,6 @@
       this.renderSnap();
       this.renderLayers();
       this.renderProperties();
-      this.renderParts();
       this.renderCutlist();
       this.updateZoom();
       $("undo").disabled = !this.history.undoStack.length;
@@ -622,96 +639,15 @@
             })),
       );
     }
-    renderParts() {
-      const parts = this.panels();
-      $("part-count").textContent = parts.length;
-      $("sidebar-part-count").textContent = parts.length;
-      $("parts-list").innerHTML = parts.length
-        ? parts
-            .map((e, i) => {
-              const { width, height } = panelSize(e),
-                spec = partSpec(e);
-              return `<button class="part-row ${this.selection.has(e.id) ? "active" : ""}" data-part="${esc(e.id)}"><span class="part-thumbnail">${icon("panel")}</span><span><strong>${esc(e.name)}</strong><small>${measure(height)} × ${measure(width)} × ${spec.thickness} mm</small></span><span class="part-quantity">×${spec.quantity}</span></button>`;
-            })
-            .join("")
-        : '<p class="muted">Kusovník je prázdný. Pohledy na stejný dílec nemusí být výrobní dílce.</p>';
-      document.querySelectorAll("[data-part]").forEach(
-        (b) =>
-          (b.onclick = () => {
-            this.select(b.dataset.part);
-            this.setTab("design");
-          }),
-      );
-    }
     renderCutlist() {
-      const consumption = materialConsumption(this.project);
-      const s = bomSummary(this.project);
-      const matBadges = consumption.materialSummary
-        .map(
-          (m) =>
-            `<span class="material-chip"><strong>${esc(m.material)}</strong>: ${m.netArea} m² (${m.sheetsCount} ${m.sheetsCount === 1 ? "deska" : m.sheetsCount < 5 ? "desky" : "desek"})</span>`,
-        )
-        .join("");
-      $("cutlist-summary").innerHTML = `
-        <div><span>Celkový počet kusů</span><strong>${s.quantity}</strong></div>
-        <div><span>Počet položek</span><strong>${s.parts}</strong></div>
-        <div><span>Čistá plocha dílců</span><strong>${consumption.totalNetArea} m²</strong></div>
-        <div><span>Spotřeba (prořez ${consumption.wasteFactor} %)</span><strong>${consumption.totalGrossArea} m²</strong></div>
-        <div><span>Potřebné desky (${consumption.sheetWidth}×${consumption.sheetHeight})</span><strong>${consumption.sheetsCount} ks (${consumption.sheetsRequired})</strong></div>
-        ${matBadges ? `<div class="material-breakdown-card"><span>Materiály</span><div class="material-chips">${matBadges}</div></div>` : ""}
-      `;
-      $("cutlist-table").innerHTML =
-        consumption.items
-          .map(
-            (r) =>
-              `<tr>
-                <td>${esc(r.name)}<small>${r.partId}</small></td>
-                <td>${r.length}</td>
-                <td>${r.width}</td>
-                <td>${r.thickness}</td>
-                <td>${r.quantity}</td>
-                <td>${esc(r.material)}</td>
-                <td>${esc(Joinery.Materials.kind(r.materialKind)?.name || "—")}</td>
-                <td>${esc(r.edgeBanding)}</td>
-                <td>${r.pieceNet} m² <small>(${r.pieceShare} %)</small></td>
-                <td><strong>${r.rowNet} m²</strong></td>
-                <td>
-                  <div class="row-actions">
-                    ${
-                      r.custom
-                        ? `<button type="button" class="table-action-btn edit-custom" data-id="${esc(r.id)}" title="Upravit">✎</button>`
-                        : `<button type="button" class="table-action-btn show-in-drawing" data-id="${esc(r.id)}" title="Zobrazit ve výkresu">👁</button>`
-                    }
-                    <button type="button" class="table-action-btn delete-cutlist-item" data-id="${esc(r.id)}" data-custom="${r.custom ? "true" : "false"}" title="Odebrat z kusovníku">🗑</button>
-                  </div>
-                </td>
-              </tr>`,
-          )
-          .join("") ||
-        '<tr><td colspan="11" class="muted">Kusovník je prázdný. Klikněte na „+ Ruční položka“ nebo „+ Přidat z výkresu“.</td></tr>';
-
-      document.querySelectorAll(".edit-custom").forEach((btn) => {
-        btn.onclick = () => this.editCustomCutlistItem(btn.dataset.id);
-      });
-      document.querySelectorAll(".show-in-drawing").forEach((btn) => {
-        btn.onclick = () => {
-          this.setTab("design");
-          this.select(btn.dataset.id);
-          this.canvas?.invalidate();
-        };
-      });
-      document.querySelectorAll(".delete-cutlist-item").forEach((btn) => {
-        btn.onclick = () => {
-          this.removeCutlistItem(btn.dataset.id, btn.dataset.custom === "true");
-        };
-      });
+      Joinery.BOMManager.BOMManager.render(this);
     }
     removeCutlistItem(id, isCustom) {
       this.commit(() => {
         if (isCustom) {
-          this.project.customCutlist = (this.project.customCutlist || []).filter(
-            (c) => c.id !== id,
-          );
+          this.project.customCutlist = (
+            this.project.customCutlist || []
+          ).filter((c) => c.id !== id);
         } else {
           const e = this.project.entities.find((q) => q.id === id);
           if (e) {
@@ -721,14 +657,16 @@
       });
       this.toast("Položka byla odebrána z kusovníku.");
       this.renderCutlist();
-      this.renderParts();
       this.renderProperties();
     }
     addDrawingToCutlistDialog() {
       const eligible = (this.project.entities || []).filter(
         (e) =>
           ["panel", "rectangle", "polyline", "region"].includes(e.type) &&
-          (e.closed || e.type === "panel" || e.type === "rectangle" || e.type === "region") &&
+          (e.closed ||
+            e.type === "panel" ||
+            e.type === "rectangle" ||
+            e.type === "region") &&
           !isInCutlist(e),
       );
       if (!eligible.length) {
@@ -746,7 +684,9 @@
           ${eligible
             .map((e) => {
               const s = panelSize(e);
-              const layer = this.project.layers.find((l) => l.id === e.layer)?.name || "Vrstva";
+              const layer =
+                this.project.layers.find((l) => l.id === e.layer)?.name ||
+                "Vrstva";
               return `
                 <div class="candidate-row">
                   <div class="candidate-info">
@@ -768,16 +708,19 @@
             if (entity) {
               this.commit(() => {
                 entity.cutListEnabled = true;
-                if (!entity.thickness && !entity.part?.thickness) entity.thickness = 18;
-                if (!entity.quantity && !entity.part?.quantity) entity.quantity = 1;
-                if (!entity.material && !entity.part?.material) entity.material = "Lamino";
-                if (!entity.banding && !entity.part?.banding) entity.banding = [0, 0, 0, 0];
+                if (!entity.thickness && !entity.part?.thickness)
+                  entity.thickness = 18;
+                if (!entity.quantity && !entity.part?.quantity)
+                  entity.quantity = 1;
+                if (!entity.material && !entity.part?.material)
+                  entity.material = "Lamino";
+                if (!entity.banding && !entity.part?.banding)
+                  entity.banding = [0, 0, 0, 0];
                 if (!entity.name) entity.name = "Dílec";
               });
               this.toast(`Dílec „${entity.name}“ byl zařazen do kusovníku.`);
               $("app-dialog").close();
               this.renderCutlist();
-              this.renderParts();
               this.renderProperties();
             }
           };
@@ -793,7 +736,12 @@
           { name: "width", label: "Šířka (mm)", value: 400 },
           { name: "thickness", label: "Tloušťka (mm)", value: 18 },
           { name: "quantity", label: "Počet kusů", value: 1 },
-          { name: "material", label: "Popis materiálu / dekor", value: "Lamino", type: "text" },
+          {
+            name: "material",
+            label: "Popis materiálu / dekor",
+            value: "Lamino",
+            type: "text",
+          },
           {
             name: "materialKind",
             label: "Druh materiálu",
@@ -801,10 +749,18 @@
             type: "select",
             options: [
               { value: "", label: "Bez značení" },
-              ...Joinery.Materials.kinds.map((k) => ({ value: k.id, label: k.name })),
+              ...Joinery.Materials.kinds.map((k) => ({
+                value: k.id,
+                label: k.name,
+              })),
             ],
           },
-          { name: "edgeBanding", label: "Ohranění (např. B:2mm T:2mm)", value: "", type: "text" },
+          {
+            name: "edgeBanding",
+            label: "Ohranění (např. B:2mm T:2mm)",
+            value: "",
+            type: "text",
+          },
         ],
         (values) =>
           this.commit(() => {
@@ -831,12 +787,22 @@
       this.formDialog(
         "Upravit položku kusovníku",
         [
-          { name: "name", label: "Název dílce", value: item.name, type: "text" },
+          {
+            name: "name",
+            label: "Název dílce",
+            value: item.name,
+            type: "text",
+          },
           { name: "length", label: "Délka (mm)", value: item.length },
           { name: "width", label: "Šířka (mm)", value: item.width },
           { name: "thickness", label: "Tloušťka (mm)", value: item.thickness },
           { name: "quantity", label: "Počet kusů", value: item.quantity },
-          { name: "material", label: "Popis materiálu / dekor", value: item.material, type: "text" },
+          {
+            name: "material",
+            label: "Popis materiálu / dekor",
+            value: item.material,
+            type: "text",
+          },
           {
             name: "materialKind",
             label: "Druh materiálu",
@@ -844,10 +810,18 @@
             type: "select",
             options: [
               { value: "", label: "Bez značení" },
-              ...Joinery.Materials.kinds.map((k) => ({ value: k.id, label: k.name })),
+              ...Joinery.Materials.kinds.map((k) => ({
+                value: k.id,
+                label: k.name,
+              })),
             ],
           },
-          { name: "edgeBanding", label: "Ohranění (např. B:2mm T:2mm)", value: item.edgeBanding === "—" ? "" : item.edgeBanding, type: "text" },
+          {
+            name: "edgeBanding",
+            label: "Ohranění (např. B:2mm T:2mm)",
+            value: item.edgeBanding === "—" ? "" : item.edgeBanding,
+            type: "text",
+          },
         ],
         (values) =>
           this.commit(() => {
@@ -875,246 +849,7 @@
       });
     }
     renderProperties() {
-      const entities = this.project.entities.filter((e) =>
-        this.selection.has(e.id),
-      );
-      $("selection-badge").textContent = entities.length
-        ? `${entities.length} vybráno`
-        : "Bez výběru";
-      if (!entities.length) {
-        $("object-properties").innerHTML =
-          `<div class="empty-properties">${icon("select")}<p>Vyberte objekt pro úpravu<br>rozměrů a materiálu.</p></div>`;
-        return;
-      }
-      if (entities.length > 1) {
-        $("object-properties").innerHTML =
-          `<p class="muted">${entities.length} vybraných objektů. Lze přesunout, kopírovat, otočit, zrcadlit nebo vytvořit pole.</p>
-          <div class="multi-cutlist-actions">
-            <button type="button" id="multi-add-cutlist" class="secondary-button small">+ Přidat vybrané do kusovníku</button>
-            <button type="button" id="multi-remove-cutlist" class="secondary-button small">✕ Odebrat vybrané z kusovníku</button>
-          </div>
-          <div class="inspector-actions"><button id="group-selected">Seskupit</button><button id="ungroup-selected">Rozdělit skupinu</button><button id="multi-edit">${icon("edit")}Upravit</button><button id="delete-selected">${icon("trash")}Smazat</button></div>`;
-        const groupIds = new Set(entities.map((e) => e.groupId));
-        const grouped = groupIds.size === 1 && !!entities[0].groupId;
-        if (grouped)
-          $("object-properties").insertAdjacentHTML(
-            "afterbegin",
-            `<p><strong>Skupina: ${esc(entities[0].groupName || "Skupina objektů")}</strong></p>`,
-          );
-        $("multi-add-cutlist").onclick = () => {
-          this.commit(() => {
-            for (const e of entities) {
-              if (["panel", "rectangle", "polyline", "region"].includes(e.type)) {
-                e.cutListEnabled = true;
-                if (!e.thickness && !e.part?.thickness) e.thickness = 18;
-                if (!e.quantity && !e.part?.quantity) e.quantity = 1;
-                if (!e.material && !e.part?.material) e.material = "Lamino";
-                if (!e.banding && !e.part?.banding) e.banding = [0, 0, 0, 0];
-              }
-            }
-          });
-          this.toast("Vybrané objekty byly zařazeny do kusovníku.");
-          this.renderParts();
-          this.renderCutlist();
-        };
-        $("multi-remove-cutlist").onclick = () => {
-          this.commit(() => {
-            for (const e of entities) {
-              e.cutListEnabled = false;
-            }
-          });
-          this.toast("Vybrané objekty byly odebrány z kusovníku.");
-          this.renderParts();
-          this.renderCutlist();
-        };
-        $("group-selected").onclick = () => this.groupSelection();
-        $("ungroup-selected").disabled = !entities.some((e) => e.groupId);
-        $("ungroup-selected").onclick = () => this.ungroupSelection();
-        $("multi-edit").onclick = () => this.operations();
-        $("delete-selected").onclick = () => this.deleteSelection();
-        const eligible = entities.length >= 2 && entities.every(isBooleanShape);
-        if (eligible) {
-          $("object-properties").insertAdjacentHTML(
-            "beforeend",
-            `<div class="boolean-quick-actions"><button data-quick-boolean="union">Sjednotit</button><button data-quick-boolean="difference">Odečíst</button><button data-quick-boolean="intersection">Průnik</button></div><p class="muted">První vybraný objekt je základ odečítání. Operace zobrazí náhled.</p>`,
-          );
-          document
-            .querySelectorAll("[data-quick-boolean]")
-            .forEach(
-              (b) =>
-                (b.onclick = () =>
-                  this.chooseTool(booleanToolName(b.dataset.quickBoolean))),
-            );
-        }
-        return;
-      }
-      const e = entities[0],
-        locked = this.project.layers.find((l) => l.id === e.layer)?.locked,
-        type = e.type,
-        canBeCutlist =
-          ["panel", "rectangle", "polyline", "region"].includes(type) &&
-          (e.closed || type === "panel" || type === "rectangle" || type === "region"),
-        inCutlist = canBeCutlist && isInCutlist(e),
-        part = inCutlist || isPart(e),
-        spec = part ? partSpec(e) : null,
-        anchor =
-          e.center ||
-          e.stockPoints?.[0] ||
-          e.points?.[0] ||
-          e.polygons?.[0]?.[0]?.[0],
-        label = (name, value, field, kind = "number", suffix = "") =>
-          `<label>${name}${suffix}<input data-prop="${field}" type="${kind}" value="${esc(value)}" ${kind === "number" ? 'step="0.01"' : ""} ${locked ? "disabled" : ""}></label>`;
-      let html = `<div class="part-type">${icon(["panel", "rectangle", "circle", "arc", "drill", "slot", "line", "dimension", "angle", "text"].includes(type) ? type : "polyline")}<div><strong>${esc(e.name || { region: "Plocha", cutout: "Výřez", radius: "Poloměrová kóta" }[type] || [...DRAW_TOOLS].find((t) => t[0] === type)?.[1] || "Objekt")}</strong><span>${locked ? "ZAMČENÁ VRSTVA · " : ""}${inCutlist ? "VÝROBNÍ DÍLEC V KUSOVNÍKU" : "VÝKRESOVÝ OBJEKT"} · mm</span></div></div><div class="property-form">`;
-      if (canBeCutlist) {
-        html += `
-          <div class="cutlist-toggle-card">
-            <div class="cutlist-badge ${inCutlist ? "badge-in" : "badge-out"}">
-              <span class="status-dot"></span>
-              <span>${inCutlist ? "Zařazeno v kusovníku" : "Není v kusovníku"}</span>
-            </div>
-            <button type="button" id="toggle-cutlist-action" class="${inCutlist ? "table-action-btn danger" : "primary-button small"}" ${locked ? "disabled" : ""}>
-              ${inCutlist ? "✕ Odebrat z kusovníku" : "+ Přidat do kusovníku"}
-            </button>
-          </div>
-        `;
-      }
-      html += label("Název", e.name || "", "name", "text");
-      if (part) {
-        const s = panelSize(e);
-        html += `<div class="form-grid">${label(type === "region" ? "Šířka polotovaru" : "Šířka", measure(s.width), "width")}${label(type === "region" ? "Výška polotovaru" : "Výška", measure(s.height), "height")}</div><div class="form-grid">${label("Tloušťka", spec?.thickness ?? e.thickness ?? 18, "thickness")}${label("Počet", spec?.quantity ?? e.quantity ?? 1, "quantity")}</div>${label("Popis materiálu / dřevina / dekor", spec?.material || e.material || "", "material", "text")}<label>Druh materiálu / značení řezu<select data-prop="materialKind" ${locked ? "disabled" : ""}>${materialOptions(spec?.materialKind || e.materialKind)}</select></label>${(spec?.materialKind || e.materialKind) ? `<p class="material-class-note muted">${esc(Joinery.Materials.kind(spec?.materialKind || e.materialKind).note)}</p>` : ""}`;
-      } else if (type === "rectangle" || (type === "polyline" && e.closed)) {
-        const s =
-          e.points && e.points.length === 4
-            ? panelSize(e)
-            : { width: bounds([e]).width, height: bounds([e]).height };
-        html += `<div class="form-grid">${label("Šířka", measure(s.width), "width")}${label("Výška", measure(s.height), "height")}</div>`;
-        html += `${label("Popis materiálu / dřevina / dekor", e.material || "", "material", "text")}<label>Druh materiálu / značení řezu<select data-prop="materialKind" ${locked ? "disabled" : ""}>${materialOptions(e.materialKind)}</select></label>${e.materialKind ? `<p class="material-class-note muted">${esc(Joinery.Materials.kind(e.materialKind).note)}</p>` : ""}`;
-      }
-      if (type === "region") {
-        const holes = e.polygons.reduce(
-          (count, polygon) => count + polygon.length - 1,
-          0,
-        );
-        html += `<div class="region-metrics"><span>Plochy: ${e.polygons.length} · otvory: ${holes}</span><strong>${measure(polygonArea(e.polygons))} mm²</strong></div>`;
-      }
-      if (["circle", "drill", "arc"].includes(type))
-        html += `<div class="form-grid">${label("Průměr", measure(e.radius * 2), "diameter")}${type === "drill" ? label("Hloubka", e.depth || 0, "depth") : label("Poloměr", measure(e.radius), "radius")}</div>`;
-      if (type === "slot") html += label("Šířka drážky", e.width, "slotWidth");
-      if (type === "cutout")
-        html += label("Hloubka obrábění", e.depth || 0, "depth");
-      if (type === "text")
-        html +=
-          label("Text", e.text, "text", "text") +
-          label("Výška textu", e.size, "size") +
-          `<label>Orientace textu<select data-prop="orientation" ${locked ? "disabled" : ""}><option value="horizontal" ${e.orientation !== "vertical" ? "selected" : ""}>Vodorovně (normálně)</option><option value="vertical" ${e.orientation === "vertical" ? "selected" : ""}>Svisle</option></select></label>`;
-      if (type === "line")
-        html += `<div class="form-grid">${label("Délka", measure(distance(...e.points)), "length")}${label("Úhel (°)", Number(((angle(...e.points) * 180) / Math.PI).toFixed(2)), "angle")}</div>`;
-      if (type === "dimension") {
-        const g = dimensionGeometry(e),
-          dir = dimensionDirection(e),
-          offset =
-            (e.points[2].x - e.points[0].x) * -dir.y +
-            (e.points[2].y - e.points[0].y) * dir.x;
-        html += `<div class="form-grid">${label("Naměřená délka", measure(g.value), "readOnly")}${label("Odsazení", measure(offset), "dimensionOffset")}</div><label>Zakončení<select data-prop="termination">${terminationOptions(e.termination || this.project.settings.dimensionTermination || "slash")}</select></label>`;
-      }
-      html += `<div class="form-grid">${label("Poloha X", measure(anchor.x), "x")}${label("Poloha Y", measure(anchor.y), "y")}</div><label>Vrstva<select data-prop="layer" ${locked ? "disabled" : ""}>${this.project.layers.map((l) => `<option value="${esc(l.id)}" ${l.id === e.layer ? "selected" : ""} ${l.locked ? "disabled" : ""}>${esc(l.name)}</option>`).join("")}</select></label>`;
-      if (e.groupId)
-        html += `<p class="muted">Člen skupiny ${esc(e.groupName || "Skupina objektů")} · Alt + kliknutí vybere jeden člen.</p><button id="ungroup-member" class="text-button">Rozdělit skupinu</button>`;
-      if (part && (spec?.banding || inCutlist)) {
-        const banding = spec?.banding || e.banding || [0, 0, 0, 0];
-        html += `<div><div class="edge-heading">Ohranění · kliknutí přepíná 0 / 1 / 2 mm</div><div class="edge-buttons">${["Dolní", "Pravá", "Horní", "Levá"].map((name, i) => `<button type="button" data-edge="${i}" class="${banding[i] ? "active" : ""}" ${locked ? "disabled" : ""}>${name}${banding[i] ? ` · ${banding[i]}` : ""}</button>`).join("")}</div></div>`;
-      }
-      html += `<div class="inspector-actions"><button id="inspect-edit" ${locked ? "disabled" : ""}>${icon("edit")}Úpravy</button><button id="delete-selected" ${locked ? "disabled" : ""}>${icon("trash")}Smazat</button></div>`;
-      if (type === "region" && !part)
-        html += `<button id="assign-region-part" class="text-button" ${locked ? "disabled" : ""}>Přiřadit polotovar <span>↗</span></button>`;
-      html += "</div>";
-      $("object-properties").innerHTML = html;
-      document
-        .querySelector('[data-prop="readOnly"]')
-        ?.setAttribute("disabled", "");
-      document
-        .querySelectorAll("[data-prop]")
-        .forEach(
-          (input) =>
-            (input.onchange = () =>
-              this.changeProperty(e.id, input.dataset.prop, input.value)),
-        );
-      if ($("toggle-cutlist-action")) {
-        $("toggle-cutlist-action").onclick = () => {
-          this.commit(() => {
-            if (inCutlist) {
-              e.cutListEnabled = false;
-            } else {
-              e.cutListEnabled = true;
-              if (!e.thickness && !e.part?.thickness) e.thickness = 18;
-              if (!e.quantity && !e.part?.quantity) e.quantity = 1;
-              if (!e.material && !e.part?.material) e.material = "Lamino";
-              if (!e.banding && !e.part?.banding) e.banding = [0, 0, 0, 0];
-              if (!e.name) e.name = "Dílec";
-            }
-          });
-          this.toast(inCutlist ? "Objekt odebrán z kusovníku." : "Objekt zařazen do kusovníku.");
-          this.renderProperties();
-          this.renderParts();
-          this.renderCutlist();
-        };
-      }
-      document.querySelectorAll("[data-edge]").forEach(
-        (b) =>
-          (b.onclick = () =>
-            this.commit(() => {
-              const target = this.project.entities.find((q) => q.id === e.id),
-                i = +b.dataset.edge;
-              if (target.part) {
-                target.part.banding = target.part.banding || [0, 0, 0, 0];
-                target.part.banding[i] = { 0: 1, 1: 2, 2: 0 }[target.part.banding[i]] ?? 0;
-              } else {
-                target.banding = target.banding || [0, 0, 0, 0];
-                target.banding[i] = { 0: 1, 1: 2, 2: 0 }[target.banding[i]] ?? 0;
-              }
-            })),
-      );
-      if ($("assign-region-part"))
-        $("assign-region-part").onclick = () => this.assignRegionPart(e.id);
-      if ($("ungroup-member"))
-        $("ungroup-member").onclick = () => this.ungroupSelection();
-      $("inspect-edit").onclick = () => this.operations();
-      $("delete-selected").onclick = () => this.deleteSelection();
-      if ($("convert-panel"))
-        $("convert-panel").onclick = () =>
-          this.commit(() => {
-            if (type === "rectangle" || (type === "polyline" && e.points.length === 4)) {
-              Object.assign(e, {
-                type: "panel",
-                name: e.name || "Převedený dílec",
-                thickness: e.thickness || 18,
-                material: e.material || "Dubová překližka",
-                quantity: e.quantity || 1,
-                banding: e.banding || [0, 0, 0, 0],
-                closed: true,
-              });
-            } else {
-              const b = bounds([e]);
-              Object.assign(e, {
-                type: "region",
-                name: e.name || "Převedený dílec",
-                polygons: [[e.points]],
-                stockPoints: [
-                  { x: b.min.x, y: b.min.y },
-                  { x: b.max.x, y: b.min.y },
-                  { x: b.max.x, y: b.max.y },
-                  { x: b.min.x, y: b.max.y },
-                ],
-                part: {
-                  thickness: e.thickness || 18,
-                  material: e.material || "Dubová překližka",
-                  ...(e.materialKind ? { materialKind: e.materialKind } : {}),
-                  quantity: e.quantity || 1,
-                  banding: [0, 0, 0, 0],
-                },
-              });
-            }
-          });
+      this.propertyPanel?.render();
     }
     changeProperty(id, key, value) {
       const e = this.project.entities.find((q) => q.id === id);
@@ -1427,6 +1162,7 @@
           banding: structuredClone(spec.banding),
           ...(spec.materialClass ? { materialClass: spec.materialClass } : {}),
           ...(spec.materialKind ? { materialKind: spec.materialKind } : {}),
+          ...Joinery.Materials.marking(spec),
         };
       }
       const consumed = new Set(
@@ -1502,10 +1238,12 @@
       );
     }
     updateToolUI() {
+      this.toolSystem?.renderHUD();
       const t = this.tools.active,
         descriptor = [...DRAW_TOOLS, ...EDIT_TOOLS].find((d) => d[0] === t) || [
           t,
-          t[0].toUpperCase() + t.slice(1),
+          Joinery.ToolSystem?.ToolSystem.names[t] ||
+            t[0].toUpperCase() + t.slice(1),
           "",
         ];
       const booleanMode = t.startsWith("boolean-");
@@ -1515,10 +1253,11 @@
       }
       if ($("active-tool-name"))
         $("active-tool-name").textContent = descriptor[1];
-      if ($("active-tool-key")) $("active-tool-key").textContent = descriptor[2];
+      if ($("active-tool-key"))
+        $("active-tool-key").textContent = descriptor[2];
       if ($("active-tool-icon"))
         $("active-tool-icon").innerHTML =
-          `<use href="#i-${booleanMode ? "boolean" : ["mirror", "trim", "extend", "radius"].includes(t) ? "edit" : t}"/>`;
+          `<use href="#i-${booleanMode ? "boolean" : t === "handle-arc" ? "arc" : t}"/>`;
       document.querySelectorAll("[data-tool]").forEach((b) => {
         b.classList.toggle(
           "active",
@@ -1541,6 +1280,7 @@
         field = (name, label, type = "number", placeholder = "") =>
           `<label>${label} <input data-option="${name}" type="${type}" value="${esc(o[name])}" placeholder="${esc(placeholder)}" ${type === "number" ? 'step="0.01" min="0"' : ""} class="${type === "text" ? "text-option" : "compact-input"}">${type === "number" && name !== "dimensionMode" ? '<span class="unit-tag">mm</span>' : ""}</label>`;
       let html = "";
+      if (this.toolSystem?.current?.interactive) return;
       if (t === "panel")
         html =
           field("width", "Š") +
@@ -1574,8 +1314,20 @@
           `<label>Orientace <select data-option="textOrientation"><option value="horizontal" ${o.textOrientation !== "vertical" ? "selected" : ""}>Vodorovně</option><option value="vertical" ${o.textOrientation === "vertical" ? "selected" : ""}>Svisle</option></select></label>`;
       else if (t === "dimension")
         html = `<label>Typ <select data-option="dimensionMode">${["aligned", "horizontal", "vertical"].map((mode) => `<option value="${mode}" ${o.dimensionMode === mode ? "selected" : ""}>${{ aligned: "Zarovnaná", horizontal: "Vodorovná", vertical: "Svislá" }[mode]}</option>`).join("")}</select></label>`;
-      else if (t === "select")
-        html = "";
+      else if (t === "move")
+        html = `<label>Detail <select data-option="detailMove">${[
+          ["view", "Přesunout pohled"],
+          ["source", "Přesunout zdrojovou oblast"],
+          ["whole", "Přesunout obojí"],
+        ]
+          .map(
+            ([v, label]) =>
+              `<option value="${v}" ${(o.detailMove || "view") === v ? "selected" : ""}>${label}</option>`,
+          )
+          .join(
+            "",
+          )}</select></label><span class="select-hint">${esc(this.tools.hint())}</span>`;
+      else if (t === "select") html = "";
       else html = `<span class="select-hint">${esc(this.tools.hint())}</span>`;
       $("tool-options").innerHTML = html;
       document.querySelectorAll("[data-option]").forEach((input) => {
@@ -1597,8 +1349,13 @@
         input.onkeydown = (e) => {
           if (e.key === "Enter") {
             e.preventDefault();
-            if (this.tools.active === "rectangle" && Number(o.rectWidth) > 0 && Number(o.rectHeight) > 0) {
-              const p = this.tools.points[0] || this.tools.pointer || { x: 0, y: 0 };
+            if (
+              this.tools.active === "rectangle" &&
+              Number(o.rectWidth) > 0 &&
+              Number(o.rectHeight) > 0
+            ) {
+              const p = this.tools.points[0] ||
+                this.tools.pointer || { x: 0, y: 0 };
               const w = +o.rectWidth,
                 h = +o.rectHeight;
               const pts = [
@@ -1607,7 +1364,14 @@
                 { x: p.x + w, y: p.y + h },
                 { x: p.x, y: p.y + h },
               ];
-              this.add([{ type: "rectangle", points: pts, closed: true, cutListEnabled: false }]);
+              this.add([
+                {
+                  type: "rectangle",
+                  points: pts,
+                  closed: true,
+                  cutListEnabled: false,
+                },
+              ]);
               this.tools.points = [];
               this.updateToolUI();
               this.canvas.canvas.focus();
@@ -1623,6 +1387,13 @@
       if ($("active-layer")) $("active-layer").value = this.activeLayer;
     }
     setTab(tab) {
+      document.body.classList.remove("print-preview");
+      if (this.sheetComposer && !this.sheetComposer.root.hidden) {
+        this.sheetComposer.save();
+        this.sheetComposer.root.hidden = true;
+        document.querySelector(".inspector-sidebar").hidden = false;
+      }
+
       this.tab = tab;
       $("design-view").hidden = tab !== "design";
       $("cutlist-view").hidden = tab !== "cutlist";
@@ -1643,6 +1414,8 @@
       this.project = next;
       this.selection.clear();
       this.tools.points = [];
+      this.toolSystem?.current?.reset();
+      this.toolSystem?.updateFloatingHUD();
       this.canvas.preview = [];
       this.canvas.booleanOperands = null;
       this.canvas.selected = this.selection;
@@ -1650,20 +1423,43 @@
       this.canvas.invalidate();
       this.scheduleSave();
     }
-    deleteSelection() {
-      if (!this.editableSelection().length) return;
-      this.commit(() => {
-        const ids = new Set(this.editableSelection().map((e) => e.id));
+    deleteSelection(requested = null) {
+      const original = this.selection;
+      if (requested) this.selection = new Set(requested);
+      const ids = new Set(this.editableSelection().map((e) => e.id));
+      this.selection = original;
+      if (!ids.size) return false;
+      // An annotation in a removed detail has no remaining coordinate frame.
+      for (const e of this.project.entities)
+        if (ids.has(e.detailId)) ids.add(e.id);
+      const result = this.commit(() => {
         this.project.entities = this.project.entities.filter(
           (e) => !ids.has(e.id),
         );
         this.selection.clear();
       });
+      if (result !== false) {
+        this.toolSystem?.current?.reset();
+        this.toolSystem?.updateFloatingHUD();
+      }
+      return result !== false;
     }
     keydown(e) {
+      if (e.defaultPrevented) return;
       const input = e.target.closest("input,textarea,select,[contenteditable]");
       if ($("app-dialog").open) return;
+      if (this.toolSystem?.handleKeydown(e)) {
+        e.preventDefault();
+        return;
+      }
       if (input) return;
+      if (this.sheetComposer && !this.sheetComposer.root.hidden) {
+        if (e.key === "Escape") {
+          e.preventDefault();
+          this.sheetComposer.close();
+        }
+        return;
+      }
       if (e.code === "Space") {
         e.preventDefault();
         this.canvas.space = true;
@@ -1707,12 +1503,16 @@
         this.undo(true);
         return;
       }
+      if (["Control", "Meta", "Shift"].includes(e.key)) {
+        this.tools.move(this.tools.pointer, e);
+        return;
+      }
       if (e.ctrlKey || e.metaKey || e.altKey) return;
       if (e.key === "Escape") {
         this.tools.cancel();
         return;
       }
-      if (e.key === "Smazat" || e.key === "Backspace") {
+      if (e.key === "Delete" || e.key === "Backspace") {
         e.preventDefault();
         if (this.tools.points.length && this.tools.options.length) {
           this.tools.options.length = this.tools.options.length.slice(0, -1);
@@ -1723,10 +1523,6 @@
       }
       if (e.key === "Enter") {
         this.tools.finish();
-        return;
-      }
-      if (e.key === "Shift") {
-        this.tools.move(this.tools.pointer, { shiftKey: true });
         return;
       }
       if (key === "k" && this.tools.active === "polyline") {
@@ -1769,13 +1565,56 @@
       );
       if (tool) this.chooseTool(tool[0]);
     }
-    dialog(title, html, setup = () => {}, actions = "") {
+    requestNewProject() {
+      this.closeExportMenu();
+      this.toolSystem.closeMenus();
+      Joinery.Dropdowns.close();
+      this.dialog(
+        "Uložit současný výkres?",
+        `<p class="dialog-note new-project-note">Před otevřením nového výkresu můžete uložit projekt „${esc(this.project.name)}“ do souboru .jcad.</p>`,
+        () => {
+          $("new-cancel").onclick = () => $("app-dialog").close();
+          $("new-discard").onclick = () => this.createNewProject();
+          $("new-save").onclick = () => {
+            try {
+              this.exportFile("jcad");
+              this.createNewProject();
+            } catch (error) {
+              this.toast(error.message);
+            }
+          };
+        },
+        `<button type="button" id="new-cancel" class="quiet-button" autofocus>Zrušit</button><button type="button" id="new-discard" class="quiet-button">Neukládat</button><button type="button" id="new-save" class="primary-button">Uložit a otevřít nový</button>`,
+        true,
+      );
+    }
+    createNewProject() {
+      clearTimeout(this.timer);
+      this.project = normalizeBasicLayers(emptyProject());
+      this.selection.clear();
+      this.canvas.selected = this.selection;
+      this.history = new History();
+      this.activeLayer = this.project.layers[0].id;
+      this.booleanPending = null;
+      this.canvas.booleanOperands = null;
+      this.canvas.diagnostics = null;
+      this.tools.target = null;
+      this.tools.cancel();
+      this.setTab("design");
+      this.render();
+      this.canvas.restore(this.project.view);
+      $("app-dialog").close();
+      this.save();
+      this.canvas.canvas.focus();
+    }
+    dialog(title, html, setup = () => {}, actions = "", modal = false) {
       this.releasePreview();
       $("dialog-title").textContent = title;
       $("dialog-body").innerHTML = html;
       $("dialog-actions").innerHTML = actions;
       $("dialog-form").onsubmit = (e) => e.preventDefault();
-      if (!$("app-dialog").open) $("app-dialog").showModal();
+      if (!$("app-dialog").open)
+        modal ? $("app-dialog").showModal() : $("app-dialog").show();
       setup();
     }
     formDialog(title, fields, onSubmit, button = "Použít", note = "") {
@@ -1800,53 +1639,7 @@
       $("form-cancel").onclick = () => $("app-dialog").close();
     }
     groupSelection() {
-      const list = this.editableSelection();
-      if (list.length < 2 || list.length !== this.selection.size) {
-        this.toast(
-          "Vyberte nejméně dva objekty ve viditelných a odemčených vrstvách.",
-        );
-        return;
-      }
-      this.formDialog(
-        "Seskupit objekty",
-        [
-          {
-            name: "name",
-            label: "Název skupiny",
-            value: "Skupina objektů",
-            type: "text",
-          },
-          {
-            name: "parts",
-            label: "Jak zobrazit objekty v kusovníku?",
-            type: "select",
-            value: "exclude",
-            options: [
-              {
-                value: "exclude",
-                label: "Pohledy na jeden dílec – vyřadit z kusovníku",
-              },
-              {
-                value: "keep",
-                label: "Samostatné dílce – zachovat kusovník",
-              },
-            ],
-          },
-        ],
-        (values) =>
-          this.commit(() => {
-            const groupId = uid();
-            for (const entity of list) {
-              entity.groupId = groupId;
-              entity.groupName =
-                values.name.trim().slice(0, 120) || "Skupina objektů";
-              if (values.parts === "exclude" && isPart(entity))
-                entity.cutListEnabled = false;
-            }
-          }),
-        "Seskupit",
-        "Kliknutí vybere celou skupinu, Alt + kliknutí jeden člen. Seskupení zachová jednotlivé obrysy a kóty.",
-      );
+      this.chooseTool("group");
     }
     ungroupSelection() {
       const ids = new Set(
@@ -1908,8 +1701,6 @@
         ["ungroup", "Zrušit skupinu"],
         ["move", "Přesunout"],
         ["copy", "Kopírovat"],
-        ["rotate", "Otočit"],
-        ["mirror", "Zrcadlit"],
         ["offset", "Odsazení"],
         ["array", "Obdélníkové / lineární pole"],
         ["trim", "Oříznout úsečku"],
@@ -1927,16 +1718,7 @@
               (b.onclick = () => {
                 const op = b.dataset.operation;
                 $("app-dialog").close();
-                if (
-                  [
-                    "move",
-                    "copy",
-                    "mirror",
-                    "trim",
-                    "extend",
-                    "radius",
-                  ].includes(op)
-                ) {
+                if (["move", "copy", "trim", "extend", "radius"].includes(op)) {
                   this.chooseTool(op);
                   return;
                 }
@@ -1959,39 +1741,6 @@
         this.booleanMenu();
         return;
       }
-      if (op === "rotate")
-        this.formDialog(
-          "Otočit výběr",
-          [
-            {
-              name: "degrees",
-              label: "Úhel proti směru hodinových ručiček (°)",
-              value: 90,
-            },
-          ],
-          (v) => {
-            const list = this.editableSelection(),
-              box = bounds(list),
-              c = {
-                x: (box.min.x + box.max.x) / 2,
-                y: (box.min.y + box.max.y) / 2,
-              },
-              n = +v.degrees;
-            if (!Number.isFinite(n)) throw new Error("Zadejte platný úhel.");
-            return this.commit(() =>
-              list.forEach((e) =>
-                Object.assign(
-                  e,
-                  transformEntity(e, (p) =>
-                    rotatePoint(p, c, (n * Math.PI) / 180),
-                  ),
-                ),
-              ),
-            );
-          },
-          "Otočit",
-          "Střed otáčení leží ve středu obálky výběru. Kóty se otáčejí s geometrií.",
-        );
       if (op === "offset")
         this.formDialog(
           "Odsazení obrysu",
@@ -2154,11 +1903,15 @@
       const rows = [
         ["Výběr", "V"],
         ["Úsečka / lomená čára", "L / W"],
-        ["Obdélník / dílec", "R / P"],
+        ["Obdélník", "R"],
         ["Kružnice / oblouk", "O / A"],
         ["Otvor / drážka", "H / S"],
         ["Kóta / text", "D / T"],
         ["Přesunout / kopírovat", "M / C"],
+        ["Číselný posun ΔX / ΔY", "Tab → Enter"],
+        ["Kopie během přesunu", "Ctrl + cílový bod"],
+        ["Dočasné měření", "Q"],
+        ["Smazat výběr", "Delete / Backspace"],
         ["Seskupit / rozdělit", "Ctrl G / Ctrl Shift G"],
         ["Vybrat člen skupiny", "Alt + kliknutí"],
         ["Úpravy", "E"],
@@ -2223,192 +1976,50 @@
       $("stamp-cancel").onclick = () =>
         after ? after() : $("app-dialog").close();
     }
-    pdfSettings(options = { paper: "A3", scale: "fit" }) {
-      this.formDialog(
-        "Náhled PDF – nastavení",
-        [
-          {
-            name: "paper",
-            label: "Formát",
-            type: "select",
-            value: options.paper,
-            options: [
-              { value: "A3", label: "A3 na šířku · 420 × 297 mm" },
-              { value: "A4", label: "A4 na šířku · 297 × 210 mm" },
-            ],
-          },
-          {
-            name: "scale",
-            label: "Měřítko",
-            type: "select",
-            value: options.scale,
-            options: [
-              { value: "fit", label: "Automaticky (1:1, 1:2, 1:5…)" },
-              ...[1, 2, 5, 10, 20, 50, 100].map((n) => ({
-                value: String(n),
-                label: `1:${n}`,
-              })),
-            ],
-          },
-        ],
-        (v) => {
-          this.previewPDF(v);
-          return false;
-        },
-        "Zobrazit náhled",
-        "Pro zachování měřítka tiskněte ve skutečné velikosti (100 %). Soubor se stáhne až tlačítkem v náhledu.",
-      );
-      $("dialog-actions").insertAdjacentHTML(
-        "afterbegin",
-        '<button type="button" id="pdf-stamp" class="quiet-button">Upravit razítko</button>',
-      );
-      $("pdf-stamp").onclick = () => {
-        const chosen = Object.fromEntries(new FormData($("dialog-form")));
-        this.titleBlockDialog(() => this.pdfSettings(chosen));
-      };
+    pdfSettings() {
+      this.sheetComposer ||= new Joinery.SheetComposer.SheetComposer(this);
+      this.sheetComposer.open();
     }
-    previewPDF(options) {
-      const { bytes, svg, pages } = exportPDF(this.project, {
-          ...options,
-          preview: true,
-        }),
-        pageList = pages && pages.length ? pages : [svg];
-      let activePageIndex = 0;
-      let zoom = 1.0;
-
-      const renderPage = () => {
-        const content = $("pdf-preview-content");
-        if (!content) return;
-        content.innerHTML = pageList[activePageIndex] || pageList[0];
-        document.querySelectorAll(".pdf-page-btn").forEach((btn, idx) => {
-          btn.classList.toggle("active", idx === activePageIndex);
-        });
-        applyZoom();
-      };
-
-      const applyZoom = () => {
-        const scaler = $("pdf-preview-scaler");
-        const level = $("pdf-zoom-level");
-        if (scaler) {
-          scaler.style.transform = `scale(${zoom})`;
-          scaler.style.transformOrigin = "top center";
-        }
-        if (level) {
-          level.textContent = `${Math.round(zoom * 100)} %`;
-        }
-      };
-
-      const setZoom = (nextZoom) => {
-        zoom = Math.max(0.2, Math.min(5.0, Number(nextZoom.toFixed(2))));
-        applyZoom();
-      };
-
-      const fitZoom = () => {
-        const container = $("pdf-preview-container");
-        const content = $("pdf-preview-content");
-        if (!container || !content) return;
-        const svgEl = content.querySelector("svg");
-        if (svgEl) {
-          const svgRect = svgEl.getBoundingClientRect();
-          const w = svgRect.width / (zoom || 1);
-          if (w > 0) {
-            const availW = container.clientWidth - 48;
-            const fit = Math.max(0.2, Math.min(2.0, availW / w));
-            setZoom(fit);
-            return;
-          }
-        }
-        setZoom(0.85);
-      };
-
-      const modalHtml = `
-        <div class="pdf-preview-toolbar">
-          <div class="pdf-page-switcher">
-            <button type="button" class="pdf-page-btn active" data-page="0">1. Výkres</button>
-            <button type="button" class="pdf-page-btn" data-page="1">2. Kusovník</button>
-          </div>
-          <div class="pdf-zoom-controls">
-            <button type="button" class="pdf-zoom-btn" id="pdf-zoom-out" title="Oddálit">−</button>
-            <span id="pdf-zoom-level">100 %</span>
-            <button type="button" class="pdf-zoom-btn" id="pdf-zoom-in" title="Přiblížit">+</button>
-            <button type="button" class="pdf-zoom-btn text-btn" id="pdf-zoom-100">100 %</button>
-            <button type="button" class="pdf-zoom-btn text-btn" id="pdf-zoom-fit">Přizpůsobit</button>
-          </div>
-        </div>
-        <div id="pdf-preview-container" class="pdf-preview-container">
-          <div id="pdf-preview-scaler" class="pdf-preview-scaler">
-            <div id="pdf-preview-content"></div>
-          </div>
-        </div>
-      `;
-
-      this.dialog(
-        "Náhled PDF výkresu a kusovníku",
-        modalHtml,
-        () => {
-          $("app-dialog").classList.add("pdf-preview-dialog");
-          renderPage();
-
-          document.querySelectorAll(".pdf-page-btn").forEach((btn) => {
-            btn.onclick = () => {
-              activePageIndex = Number(btn.dataset.page) || 0;
-              renderPage();
-            };
-          });
-
-          $("pdf-zoom-in").onclick = () => setZoom(zoom * 1.25);
-          $("pdf-zoom-out").onclick = () => setZoom(zoom / 1.25);
-          $("pdf-zoom-100").onclick = () => setZoom(1.0);
-          $("pdf-zoom-fit").onclick = () => fitZoom();
-
-          const container = $("pdf-preview-container");
-          if (container) {
-            container.onwheel = (e) => {
-              if (e.ctrlKey || e.metaKey) {
-                e.preventDefault();
-                const factor = e.deltaY < 0 ? 1.15 : 0.87;
-                setZoom(zoom * factor);
-              }
-            };
-          }
-
-          setTimeout(() => fitZoom(), 50);
-        },
-        '<button type="button" id="preview-settings" class="quiet-button">Zpět k nastavení</button><button type="button" id="preview-download" class="primary-button">Stáhnout PDF</button>',
-      );
-      $("preview-settings").onclick = () => this.pdfSettings(options);
-      $("preview-download").onclick = () =>
-        download(
-          bytes,
-          `${this.project.name.replace(/[^a-zA-Z0-9_-]/g, "_") || "vykres"}.pdf`,
-          "application/pdf",
-        );
+    previewPDF() {
+      this.pdfSettings();
+    }
+    closeExportMenu(focus = false) {
+      $("export-menu").hidden = true;
+      $("export").setAttribute("aria-expanded", "false");
+      if (focus) $("export").focus();
     }
     exportDialog() {
+      const menu = $("export-menu");
+      if (!menu.hidden) {
+        this.closeExportMenu();
+        return;
+      }
+      this.toolSystem?.closeMenus();
       const formats = [
-        ["jcad", "Projekt Joinery CAD (.jcad)", "Nativní formát projektu pro pozdější úpravy"],
-        ["pdf", "Výkres PDF", "Náhled, razítko a měřítko před stažením"],
-        ["dxf", "Výkres DXF", "Obrysy pro další práci v CAD / CAM"],
-        ["json", "Záloha JSON", "Záložní datový export projektu"],
+        ["jcad", "Projekt (.jcad)", "Uložit pro další úpravy"],
+        ["pdf", "Náhled PDF", "Připravit tiskový výkres"],
+        ["dxf", "Výkres DXF", "Obrysy pro CAD / CAM"],
       ];
-      this.dialog(
-        "Uložit / exportovat",
-        `<div class="export-options">${formats.map(([format, title, note]) => `<button type="button" class="export-option" data-format="${format}"><strong>${title}</strong><span>${note}</span></button>`).join("")}</div>`,
-        () => {
-          document.querySelectorAll("[data-format]").forEach(
-            (b) =>
-              (b.onclick = () => {
-                if (b.dataset.format === "pdf") this.pdfSettings();
-                else {
-                  this.exportFile(b.dataset.format);
-                  $("app-dialog").close();
-                }
-              }),
-          );
-        },
-      );
+      menu.innerHTML = formats
+        .map(
+          ([format, title, note]) =>
+            `<button role="menuitem" data-format="${format}">${icon(format === "jcad" ? "folder" : "download")}<span><strong>${title}</strong><small>${note}</small></span></button>`,
+        )
+        .join("");
+      for (const b of menu.children)
+        b.onclick = () => {
+          this.closeExportMenu();
+          if (b.dataset.format === "pdf") this.pdfSettings();
+          else this.exportFile(b.dataset.format);
+        };
+      menu.hidden = false;
+      $("export").setAttribute("aria-expanded", "true");
     }
     exportFile(format, options = {}) {
+      if (format === "pdf") {
+        this.pdfSettings();
+        return true;
+      }
       const name =
         this.project.name.replace(/[^a-z0-9-_]+/gi, "-") || "joinery-project";
       let data,
@@ -2435,7 +2046,7 @@
         extension = "cutlist.json";
       }
       if (format === "csv") {
-        data = exportCSV(this.project);
+        data = Joinery.BOMManager.BOMManager.csv(this.project);
         type = "text/csv;charset=utf-8";
         extension = "cutlist.csv";
       }
@@ -2470,7 +2081,8 @@
           next.name = file.name.replace(/\.dxf$/i, "");
         } else {
           next = normalizeBasicLayers(validateProject(JSON.parse(source)));
-          next.name = next.name || file.name.replace(/\.(jcad|joinery|json)$/i, "");
+          next.name =
+            next.name || file.name.replace(/\.(jcad|joinery|json)$/i, "");
         }
         const ok = this.commit(() => {
           this.project = next;

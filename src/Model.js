@@ -20,6 +20,8 @@
     "radius",
     "text",
     "region",
+    "leader",
+    "detail",
   ];
   function panel(
     x,
@@ -72,17 +74,20 @@
     e.type === "panel" ||
     (e.type === "region" && !!e.part && !!e.stockPoints) ||
     (e.type === "polyline" && e.closed && (e.thickness != null || !!e.part)) ||
-    (e.cutListEnabled === true && ["rectangle", "polyline", "panel", "region"].includes(e.type));
+    (e.cutListEnabled === true &&
+      ["rectangle", "polyline", "panel", "region"].includes(e.type));
   const isInCutlist = (e) => {
     if (!e) return false;
     if (e.cutListEnabled === false) return false;
-    if (e.cutListEnabled === true) return true;
+    if (e.cutListEnabled === true)
+      return ["panel", "rectangle", "polyline", "region"].includes(e.type);
     if (e.type === "panel") return true;
     if (e.type === "region" && !!e.part && !!e.stockPoints) return true;
-    if (e.type === "polyline" && e.closed && (e.thickness != null || !!e.part)) return true;
+    if (e.type === "polyline" && e.closed && (e.thickness != null || !!e.part))
+      return true;
     return false;
   };
-  const partSpec = (e) => (e.type === "region" ? (e.part || e) : e);
+  const partSpec = (e) => (e.type === "region" ? e.part || e : e);
   function emptyProject() {
     return {
       version: 1,
@@ -181,21 +186,42 @@
     return p;
   }
   function normalizeBasicLayers(project) {
-    if (!project || !Array.isArray(project.layers) || project.layers.length === 0) return project;
+    if (
+      !project ||
+      !Array.isArray(project.layers) ||
+      project.layers.length === 0
+    )
+      return project;
     const basicIds = new Set(["joinery", "drilling", "dimensions"]);
-    const basicNames = new Set(["joinery", "drilling", "dimensions", "vrstva 2", "vrstva 3", "vrstva 4"]);
+    const basicNames = new Set([
+      "joinery",
+      "drilling",
+      "dimensions",
+      "vrstva 2",
+      "vrstva 3",
+      "vrstva 4",
+    ]);
     const primaryLayer = project.layers[0];
-    if (primaryLayer && (primaryLayer.name || "").toLowerCase().trim() === "panels") {
+    if (
+      primaryLayer &&
+      (primaryLayer.name || "").toLowerCase().trim() === "panels"
+    ) {
       primaryLayer.name = "Vrstva 1";
     }
     const hasBasic = project.layers.some(
-      (l, idx) => idx > 0 && (basicIds.has(l.id) || basicNames.has((l.name || "").toLowerCase().trim()))
+      (l, idx) =>
+        idx > 0 &&
+        (basicIds.has(l.id) ||
+          basicNames.has((l.name || "").toLowerCase().trim())),
     );
     if (hasBasic) {
       const removedIds = new Set();
       project.layers = project.layers.filter((l, idx) => {
         if (idx === 0) return true;
-        if (basicIds.has(l.id) || basicNames.has((l.name || "").toLowerCase().trim())) {
+        if (
+          basicIds.has(l.id) ||
+          basicNames.has((l.name || "").toLowerCase().trim())
+        ) {
           removedIds.add(l.id);
           return false;
         }
@@ -229,6 +255,23 @@
       point = (p) => p && finite(p.x) && finite(p.y),
       layerIds = new Set(),
       ids = new Set();
+    const customIds = new Set();
+    for (const c of input.customCutlist) {
+      if (
+        !c ||
+        typeof c.id !== "string" ||
+        customIds.has(c.id) ||
+        ![c.length, c.width, c.thickness].every((n) => finite(n) && n > 0) ||
+        !Number.isInteger(c.quantity) ||
+        c.quantity < 1 ||
+        c.quantity > 10000 ||
+        typeof c.name !== "string" ||
+        c.name.length > 5000 ||
+        (c.materialKind && !Joinery.Materials.kind(c.materialKind))
+      )
+        throw new Error("Neplatná ruční položka kusovníku.");
+      customIds.add(c.id);
+    }
     for (const l of input.layers) {
       if (
         !l ||
@@ -252,7 +295,70 @@
       )
         throw new Error("Invalid object or layer reference.");
       ids.add(e.id);
-      const materialSpec = e.type === "region" ? e.part : e;
+      if (
+        e.lineStyle &&
+        !["continuous", "dashed", "dashdot"].includes(e.lineStyle)
+      )
+        throw new Error("Neplatný typ čáry.");
+      if (
+        e.lineWeight != null &&
+        (!finite(e.lineWeight) || e.lineWeight <= 0 || e.lineWeight > 5)
+      )
+        throw new Error("Neplatná tloušťka čáry.");
+      if (e.stroke != null && !/^#[0-9a-f]{6}$/i.test(e.stroke))
+        throw new Error("Neplatná barva čáry.");
+      if (
+        e.bulges &&
+        (!Array.isArray(e.bulges) ||
+          e.bulges.length !== e.points?.length ||
+          !e.bulges.every(finite))
+      )
+        throw new Error("Neplatné obloukové vrcholy.");
+      if (
+        e.grainVector &&
+        (!Array.isArray(e.grainVector) ||
+          e.grainVector.length !== 2 ||
+          !e.grainVector.every(point))
+      )
+        throw new Error("Neplatný směr vláken.");
+      if (
+        e.type === "leader" &&
+        (!Array.isArray(e.points) ||
+          e.points.length !== 3 ||
+          !e.points.every(point) ||
+          typeof e.text !== "string" ||
+          e.text.length > 5000)
+      )
+        throw new Error("Neplatná odkazová kóta.");
+      if (
+        e.type === "detail" &&
+        (!point(e.center) ||
+          !finite(e.radius) ||
+          e.radius <= 0 ||
+          !finite(e.factor) ||
+          e.factor <= 0 ||
+          e.factor > 1000 ||
+          !e.points?.every(point) ||
+          e.points.length !== 1 ||
+          !Array.isArray(e.contents) ||
+          e.contents.length > 20000 ||
+          e.contents.some(
+            (c) =>
+              ![
+                "line",
+                "region",
+                "arc",
+                "circle",
+                "drill",
+                "polyline",
+                "panel",
+                "rectangle",
+              ].includes(c.type),
+          ))
+      )
+        throw new Error("Neplatný detail.");
+      const materialSpec = e.part || e;
+      Joinery.Markings?.validate(e);
       if (
         materialSpec?.materialKind != null &&
         materialSpec.materialKind !== "" &&
@@ -426,6 +532,43 @@
         (typeof e.name !== "string" || e.name.length > 5000)
       )
         throw new Error("Invalid object name.");
+      if (
+        e.measurementFactor != null &&
+        (!finite(e.measurementFactor) ||
+          e.measurementFactor <= 0 ||
+          e.measurementFactor > 1000)
+      )
+        throw new Error("Neplatné měřítko kóty detailu.");
+      if (e.target != null && !point(e.target))
+        throw new Error("Neplatný bod kóty.");
+      if (e.type === "detail") {
+        const childIds = new Set();
+        for (const c of e.contents) {
+          if (childIds.has(c.id)) throw new Error("Duplicitní objekt detailu.");
+          childIds.add(c.id);
+        }
+        validateProject({
+          ...input,
+          entities: e.contents.map((c) => ({
+            ...c,
+            layer: e.layer,
+            cutListEnabled: false,
+          })),
+          settings: {},
+          view: null,
+        });
+      }
+      if (["polyline", "rectangle"].includes(e.type) && isInCutlist(e)) {
+        if (e.thickness != null && (!finite(e.thickness) || e.thickness <= 0))
+          throw new Error("Neplatná tloušťka dílce.");
+        if (
+          e.quantity != null &&
+          (!Number.isInteger(e.quantity) ||
+            e.quantity < 1 ||
+            e.quantity > 10000)
+        )
+          throw new Error("Neplatný počet kusů.");
+      }
       if (e.depth != null && (!finite(e.depth) || e.depth < 0))
         throw new Error("Invalid cut depth.");
       if (
@@ -462,6 +605,24 @@
     );
     p.settings = {
       titleBlock,
+      drawingScale:
+        finite(s.drawingScale) && s.drawingScale > 0 ? s.drawingScale : 10,
+      defaultLineStyle: ["continuous", "dashed", "dashdot"].includes(
+        s.defaultLineStyle,
+      )
+        ? s.defaultLineStyle
+        : "continuous",
+      defaultLineWeight:
+        finite(s.defaultLineWeight) && s.defaultLineWeight > 0
+          ? s.defaultLineWeight
+          : 0.35,
+      defaultMaterialKind: Joinery.Materials.kind(s.defaultMaterialKind)
+        ? s.defaultMaterialKind
+        : "",
+      sheetLayout:
+        s.sheetLayout && typeof s.sheetLayout === "object"
+          ? s.sheetLayout
+          : null,
       dimensionTermination: ["slash", "open", "filled"].includes(
         s.dimensionTermination,
       )

@@ -12,9 +12,10 @@
     arc: "Oblouk určíte třemi body: začátek, průchozí bod, konec.",
     slot: "Vyberte středy konců drážky a nastavte její šířku.",
     drill: "Umístí otvor podle zvoleného průměru a hloubky vrtání.",
-    dimension: "Vyberte dva body a polohu kóty. Styl nastavíte v Kótování.",
+    dimension:
+      "Vyberte dva body a polohu kóty. Styl nastavíte ve vlastnostech výkresu.",
     angle: "Vyberte vrchol úhlu a body na obou ramenech.",
-    text: "Umístí text zadaný v horní liště.",
+    text: "Umístí text zadaný ve spodní liště.",
     move: "Přesune výběr podle základního a cílového bodu.",
     copy: "Vytvoří nezávislou kopii výběru; skupiny zůstanou pohromadě.",
     boolean:
@@ -28,7 +29,8 @@
     bubble.role = "tooltip";
     bubble.hidden = true;
     document.body.append(bubble);
-    let target = null;
+    let target = null,
+      timer = null;
     function convert(root) {
       const list = [...root.querySelectorAll("[title]")];
       if (root.nodeType === 1 && root.hasAttribute("title")) list.push(root);
@@ -50,21 +52,30 @@
       attributeFilter: ["title"],
     });
     function hide() {
+      clearTimeout(timer);
       if (target) target.removeAttribute("aria-describedby");
       target = null;
       bubble.hidden = true;
     }
-    function show(e) {
+    function delayedShow(e) {
       const element = e.target.closest?.("[data-tooltip]");
+      if (!element || element.disabled || element === target) return;
+      hide();
+      timer = setTimeout(() => show(element), 500);
+    }
+    function show(element) {
       if (!element || element.disabled) return hide();
       target = element;
       bubble.replaceChildren();
       const heading = document.createElement("strong");
       heading.textContent = element.dataset.tooltip;
       bubble.append(heading);
-      if (descriptions[element.dataset.tool]) {
+      const description =
+        descriptions[element.dataset.tool] ||
+        J.ToolSystem?.ToolSystem.hints[element.dataset.tool];
+      if (description) {
         const p = document.createElement("p");
-        p.textContent = descriptions[element.dataset.tool];
+        p.textContent = description;
         bubble.append(p);
       }
       bubble.hidden = false;
@@ -75,9 +86,14 @@
       bubble.style.left = `${Math.max(8, Math.min(innerWidth - w - 8, r.left))}px`;
       bubble.style.top = `${r.bottom + h + 12 < innerHeight ? r.bottom + 8 : Math.max(8, r.top - h - 8)}px`;
     }
-    document.addEventListener("pointerover", show);
-    document.addEventListener("focusin", show);
-    document.addEventListener("pointerout", hide);
+    document.addEventListener("pointerover", delayedShow);
+    document.addEventListener("focusin", delayedShow);
+    document.addEventListener("pointerout", (e) => {
+      const element = e.target.closest?.("[data-tooltip]");
+      if (element && e.relatedTarget && element.contains(e.relatedTarget))
+        return;
+      hide();
+    });
     document.addEventListener("focusout", hide);
     document.addEventListener("pointerdown", hide);
     document.addEventListener("keydown", (e) => {

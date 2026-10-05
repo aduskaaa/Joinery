@@ -67,16 +67,30 @@
   // Material symbols describe a section, not a strength grade or a surface texture.
   const kinds = Object.freeze([
     {
+      id: "plywood",
+      name: "Překližka",
+      code: "PDP",
+      pattern: "board",
+      note: "Vrstvená deska; specifikace dle EN 636.",
+    },
+    {
+      id: "mdf",
+      name: "MDF",
+      code: "DVD-SC",
+      pattern: "board",
+      note: "Dřevovláknitá deska; specifikace dle EN 622-5.",
+    },
+    {
       id: "solid-cross",
       name: "Masiv – příčný řez",
-      code: "MAS",
+      code: "",
       pattern: "diagonal",
       note: "Tenké rovnoběžné šrafy pod úhlem 45°. Dřevinu uveďte v popisu.",
     },
     {
       id: "solid-long",
       name: "Masiv – podélný řez",
-      code: "MAS",
+      code: "",
       pattern: "longitudinal",
       note: "Tenké čáry ve směru délky dílce.",
     },
@@ -90,31 +104,83 @@
     {
       id: "hardboard",
       name: "Sololit",
-      code: "DVD-T",
+      code: "DVD",
       pattern: "board",
-      note: "Tvrdá dřevovláknitá deska. Značení řezu je doplněno označením DVD-T.",
+      note: "Dřevovláknitá deska vyráběná mokrou cestou: DVD podle předlohy.",
     },
     {
       id: "laminate",
       name: "Lamino",
-      code: "DTD-L",
+      code: "DTD",
       pattern: "laminate",
-      note: "Laminovaná DTD: značení desky a tenké čáry krycí vrstvy uvnitř obrysu.",
+      note: "Laminovaná DTD: značení desky a velmi tlustá plná čára krycí fólie na obou lících.",
     },
     {
       id: "glass",
       name: "Sklo",
       code: "SKLO",
       pattern: "glass",
-      note: "Skupiny tří šikmých čar. Druh a tloušťku skla uveďte v popisu.",
+      note: "Dvojice tenkých šraf pod 30° podle předlohy; druh a rozměr skla se doplní textem.",
     },
+    ...[
+      ["plywood-waterproof", "Vodovzdorná překližka", "PDP-H"],
+      ["blockboard", "Laťovka – rostlé dřevo", "PDJ-L"],
+      ["blockboard-glued", "Laťovka – lepený střed", "PDJ-LR"],
+      ["blockboard-rope", "Laťovka – motouzový střed", "PDJ-LM"],
+      ["blockboard-heart", "Laťovka – středové řezivo", "PDJ-LS"],
+      ["blockboard-veneer", "Laťovka – klížené dýhové pásky", "PDJ-LT"],
+      ["composite", "Složená deska", "PDS"],
+      ["honeycomb", "Voštinová deska", "PDS-V"],
+      ["honeycomb-paper", "Deska s papírovými voštinami", "PDS-VP"],
+      ["composite-fibre", "Deska s dřevovláknitým středem", "PDS-VD"],
+      ["likus", "Likus", "PDS-L"],
+      ["fibre-dry-hard", "Suchá dřevovláknitá – tvrdá", "DVD-SC-T"],
+      ["fibre-dry-medium", "Suchá dřevovláknitá – středně tvrdá", "DVD-SC-PT"],
+      ["fibre-dry-soft", "Suchá dřevovláknitá – měkká", "DVD-SC-M"],
+      ["particle-extruded", "Výtlačně lisovaná DTD – plná", "DTD-VLP"],
+      ["particle-hollow", "Výtlačně lisovaná DTD – vylehčená", "DTD-VLV"],
+      ["fibre-particle", "Vláknitotřísková deska", "VTD"],
+      ["sawdust", "Pilinová deska", "PID"],
+      ["shive-sanded", "Pazdeřová deska – broušená", "PAD-B"],
+      ["shive-unsanded", "Pazdeřová deska – nebroušená", "PAD-N"],
+    ].map(([id,name,code]) => ({id,name,code,pattern:"board",note:"Tenké šrafy kolmo k líci; značka podle tabulky 2 poslané předlohy."})),
+    {id:"solid-panel",name:"Spárovka",code:"SP",pattern:"longitudinal",note:"Spárovka se podle předlohy označuje SP."},
+    ...[
+      ["metal","Kovy","diagonal"], ["plastic","Plasty","plastic"],
+      ["rubber","Pryž","rubber"], ["stone","Kámen","stone"],
+      ["putty","Tmely","putty"], ["insulation","Izolace","insulation"],
+    ].map(([id,name,pattern])=>({id,name,pattern,code:"",note:"Grafické označení podle tabulky 4 poslané předlohy."})),
   ]);
   const kind = (id) => kinds.find((k) => k.id === id) || null;
+  const species = Object.freeze([
+    ["SM","Smrk"],["JD","Jedle"],["DG","Douglaska"],["BO","Borovice"],
+    ["VJ","Vejmutovka"],["MD","Modřín"],["DB","Dub"],["CER","Dub cer"],
+    ["BK","Buk"],["JS","Jasan"],["JV","Javor"],["AK","Akát"],["HB","Habr"],
+    ["JL","Jilm"],["OR","Ořešák vlašský"],["BR","Bříza"],["SV","Švestka"],
+    ["TR","Třešeň"],["LP","Lípa"],["OL","Olše"],["TP","Topol"],["KS","Jírovec"],
+    ["ABA","Abachi"],["ANI","Aningeri"],["AVO","Avodire"],["BUB","Bubinga"],
+    ["DIB","Dibetou"],["EBE","Eben"],["KTO","Koto"],["LMB","Limba"],
+    ["MAH","Mahagon"],["MAC","Makore"],["MAN","Mansonia"],["OKU","Okoume"],
+    ["OVE","Ovengol"],["PAL","Paldao"],["PLR","Palisandr"],["TEK","Teak"],["ZIN","Zingana"],
+  ].map(([id,name])=>Object.freeze({id,name:`${name} (${id})`})));
+  const markingKeys = Object.freeze(["woodSpecies","markSize","showMaterialLabel","hatchReverse","hatchSpacing","faceLayer","faceDirection","coreDirection"]);
+  const mark = spec => {
+    const material=kind(spec.materialKind);
+    if(!material)return "";
+    const code=material.id.startsWith("solid-") && material.id!=="solid-panel"
+      ? spec.woodSpecies || "" : material.code || material.name;
+    return [code,spec.markSize].filter(Boolean).join(" ");
+  };
+  const marking = spec => Object.fromEntries(markingKeys.filter(k=>spec?.[k]!==undefined).map(k=>[k,spec[k]]));
   Joinery.Materials = {
     catalogue: Object.freeze(catalogue),
     get,
     designation,
     kinds,
     kind,
+    species,
+    markingKeys,
+    mark,
+    marking,
   };
 })((globalThis.Joinery = globalThis.Joinery || {}));

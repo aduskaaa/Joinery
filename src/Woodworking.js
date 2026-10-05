@@ -13,7 +13,8 @@
     distance,
     TAU,
   } = Joinery.Geometry;
-  const { panelSize, isInCutlist, uid, emptyProject, validateProject } = Joinery.Model;
+  const { panelSize, isInCutlist, uid, emptyProject, validateProject } =
+    Joinery.Model;
   const {
     primitives,
     fontSize,
@@ -39,7 +40,7 @@
       .filter((e) => isInCutlist(e))
       .map((e, i) => {
         // These are declared blank sizes, not an estimate of material consumption.
-        const part = e.type === "panel" ? e : (e.part || e),
+        const part = e.type === "panel" ? e : e.part || e,
           { width, height } = panelSize(
             e.type === "panel"
               ? e
@@ -131,8 +132,12 @@
   }
   function materialConsumption(project, customSheet = null) {
     const rows = cutList(project);
-    const sheetWidth = Number(customSheet?.sheetWidth || project.settings?.sheetWidth || 2800);
-    const sheetHeight = Number(customSheet?.sheetHeight || project.settings?.sheetHeight || 2070);
+    const sheetWidth = Number(
+      customSheet?.sheetWidth || project.settings?.sheetWidth || 2800,
+    );
+    const sheetHeight = Number(
+      customSheet?.sheetHeight || project.settings?.sheetHeight || 2070,
+    );
     const sheetArea = (sheetWidth * sheetHeight) / 1000000;
     const wasteFactor = Number(project.settings?.wasteFactor ?? 10);
     let totalNetArea = 0;
@@ -332,7 +337,7 @@
     for (const { items } of scene) {
       const color = "#000000";
       for (const p of items) {
-        const common = `stroke="${color}" stroke-width="${p.banding ? 0.7 : p.thin ? 0.25 : 0.5}" fill="${p.fill === "solid" ? color : "none"}"${p.dash ? ' stroke-dasharray="5 3"' : ""}`;
+        const common = `stroke="${color}" stroke-width="${p.banding ? 0.7 : p.lineWeight || (p.thin ? 0.18 : 0.35)}" fill="${p.fill === "solid" ? color : "none"}"${p.lineStyle === "dashdot" ? ' stroke-dasharray="10 3 1 3"' : p.lineStyle === "dashed" || p.dash ? ' stroke-dasharray="5 3"' : ""}${p.opacity != null ? ` opacity="${p.opacity}"` : ""}`;
         if (p.kind === "region") {
           const d = p.polygons
             .flatMap((polygon) => polygon)
@@ -343,9 +348,7 @@
                   .join(" ") + " Z",
             )
             .join(" ");
-          pieces.push(
-            `<path d="${d}" stroke="${color}" stroke-width="0.5" fill="${color}" fill-opacity="0.08" fill-rule="evenodd"/>`,
-          );
+          pieces.push(`<path d="${d}" ${common} fill-rule="evenodd"/>`);
         }
         if (p.kind === "path")
           pieces.push(
@@ -356,14 +359,32 @@
             `<circle cx="${x(p.center)}" cy="${y(p.center)}" r="${round(p.radius)}" ${common}/>`,
           );
         if (p.kind === "arc") {
-          const pts = arcPoints(p, 160);
-          pieces.push(
-            `<path d="${pts.map((q, i) => `${i ? "L" : "M"}${x(q)} ${y(q)}`).join(" ")}" ${common}/>`,
-          );
+          const sweep = normalizeAngle(p.end - p.start) || TAU;
+          if (sweep >= TAU - 1e-8)
+            pieces.push(
+              `<circle cx="${x(p.center)}" cy="${y(p.center)}" r="${round(p.radius)}" ${common}/>`,
+            );
+          else {
+            const a = add(p.center, {
+                x: p.radius * Math.cos(p.start),
+                y: p.radius * Math.sin(p.start),
+              }),
+              b = add(p.center, {
+                x: p.radius * Math.cos(p.start + sweep),
+                y: p.radius * Math.sin(p.start + sweep),
+              });
+            pieces.push(
+              `<path d="M${x(a)} ${y(a)} A${round(p.radius)} ${round(p.radius)} 0 ${sweep > Math.PI ? 1 : 0} 0 ${x(b)} ${y(b)}" ${common}/>`,
+            );
+          }
         }
         if (p.kind === "text") {
-          const px = x(p.p), py = y(p.p);
-          const rot = p.orientation === "vertical" ? ` transform="rotate(-90 ${px} ${py})"` : "";
+          const px = x(p.p),
+            py = y(p.p);
+          const rot =
+            p.orientation === "vertical"
+              ? ` transform="rotate(-90 ${px} ${py})"`
+              : "";
           pieces.push(
             `<text x="${px}" y="${py}"${rot} font-family="Arial,sans-serif" font-size="${fontSize(p)}" text-anchor="${p.anchor || "middle"}" fill="${color}">${escapeHTML(p.text)}</text>`,
           );
@@ -403,6 +424,35 @@
       [70, 0],
       [0, "ENDTAB"],
       [0, "TABLE"],
+      [2, "LTYPE"],
+      [70, 3],
+    ]);
+    // Autodesk DXF LTYPE elements: positive dash, negative space, zero dot.
+    for (const [name, pattern] of [
+      ["CONTINUOUS", []],
+      ["DASHED", [5, -3]],
+      ["CENTER", [10, -3, 0, -3]],
+    ]) {
+      pairs([
+        [0, "LTYPE"],
+        [100, "AcDbSymbolTableRecord"],
+        [100, "AcDbLinetypeTableRecord"],
+        [2, name],
+        [70, 0],
+        [3, name],
+        [72, 65],
+        [73, pattern.length],
+        [40, pattern.reduce((sum, n) => sum + Math.abs(n), 0)],
+      ]);
+      for (const length of pattern)
+        pairs([
+          [49, length],
+          [74, 0],
+        ]);
+    }
+    pairs([
+      [0, "ENDTAB"],
+      [0, "TABLE"],
       [2, "LAYER"],
       [70, project.layers.length],
     ]);
@@ -429,6 +479,29 @@
     const start = (type, e) => {
       pair(0, type);
       pair(8, ascii(project.layers.find((l) => l.id === e.layer)?.name || "0"));
+      pair(
+        6,
+        { continuous: "CONTINUOUS", dashed: "DASHED", dashdot: "CENTER" }[
+          e.lineStyle
+        ] || "CONTINUOUS",
+      );
+      if (e.lineWeight) {
+        const weights = [
+          0, 5, 9, 13, 15, 18, 20, 25, 30, 35, 40, 50, 53, 60, 70, 80, 90, 100,
+          106, 120, 140, 158, 200, 211,
+        ];
+        pair(
+          370,
+          weights.reduce(
+            (best, n) =>
+              Math.abs(n - e.lineWeight * 100) <
+              Math.abs(best - e.lineWeight * 100)
+                ? n
+                : best,
+            35,
+          ),
+        );
+      }
     };
     for (const e of project.entities) {
       if (e.type === "region") {
@@ -497,9 +570,9 @@
         continue;
       }
       if (
-        ["panel", "rectangle", "polyline", "cutout", "slot"].includes(e.type)
+        ["panel", "rectangle", "polyline", "cutout", "slot"].includes(e.type) && !e.symbolType
       ) {
-        const pts = vertices(e);
+        const pts = e.bulges?.some(Boolean) ? e.points : vertices(e);
         start("LWPOLYLINE", e);
         pairs([
           [90, pts.length],
@@ -511,10 +584,11 @@
               : 0,
           ],
         ]);
-        pts.forEach((p) =>
+        pts.forEach((p, i) =>
           pairs([
             [10, round(p.x)],
             [20, round(p.y)],
+            ...(e.bulges?.[i] ? [[42, e.bulges[i]]] : []),
           ]),
         );
         meta(e);
@@ -530,7 +604,7 @@
             [40, p.size],
             [1, ascii(p.text)],
             ...(p.orientation === "vertical" ? [[50, 90]] : []),
-            [72, p.anchor ? 0 : 1],
+            [72, p.anchor === "start" ? 0 : p.anchor === "end" ? 2 : 1],
             [11, round(p.p.x)],
             [21, round(p.p.y)],
           ]);
@@ -696,7 +770,16 @@
           throw new Error("Invalid Joinery DXF metadata.");
         }
       }
-      let e = { id, layer: layerId };
+      let e = {
+        id,
+        layer: layerId,
+        lineStyle: /CENTER|DASHDOT/i.test(get(6) || "")
+          ? "dashdot"
+          : /DASH|HIDDEN/i.test(get(6) || "")
+            ? "dashed"
+            : "continuous",
+        ...(num(370) > 0 ? { lineWeight: num(370) / 100 } : {}),
+      };
       if (rec.type === "LINE")
         Object.assign(e, { type: "line", points: [pt(), pt(11, 21)] });
       else if (rec.type === "CIRCLE")
@@ -834,15 +917,28 @@
       y = (p) => round(p.y * ratio + oy),
       commands = ["0 J 0 j", "0 G"];
     const font = Joinery.PdfFont.context();
-    const pdfText = (value, px, py, size, center = false, vertical = false) => {
-      const w = font.width(value, size);
+    const pdfText = (
+      value,
+      px,
+      py,
+      size,
+      anchor = "start",
+      vertical = false,
+    ) => {
+      const w = font.width(value, size),
+        offset =
+          anchor === "end"
+            ? w
+            : anchor === "center" || anchor === true
+              ? w / 2
+              : 0;
       if (vertical) {
-        const ty = center ? py - w / 2 : py;
+        const ty = py - offset;
         commands.push(
           `BT 0 1 -1 0 ${round(px)} ${round(ty)} Tm /F1 ${round(size)} Tf ${font.encode(value)} Tj ET`,
         );
       } else {
-        const tx = center ? px - w / 2 : px;
+        const tx = px - offset;
         commands.push(
           `BT /F1 ${round(size)} Tf ${round(tx)} ${round(py)} Td ${font.encode(value)} Tj ET`,
         );
@@ -851,7 +947,7 @@
     for (const { items } of scene)
       for (const p of items) {
         commands.push(
-          `${round((p.banding ? 0.7 : p.thin ? 0.25 : 0.5) * mm)} w`,
+          `${round(Joinery.PDFExporter.PDFExporter.printLineWeight(p) * mm)} w`,
           p.dash ? "[3 2] 0 d" : "[] 0 d",
         );
         if (p.kind === "text") {
@@ -863,7 +959,7 @@
             p.annotation
               ? (p.size * ratio) / font.capHeight
               : Math.max(4, p.size * ratio),
-            !p.anchor,
+            p.anchor || "center",
             p.orientation === "vertical",
           );
           continue;
@@ -878,7 +974,7 @@
                   .join(" ") + " h",
             )
             .join(" ");
-          commands.push("0.97 g", compound + " B*");
+          commands.push(compound + " S");
           continue;
         }
         if (p.kind === "circle") {
@@ -900,7 +996,7 @@
             (p.fill === "solid" ? " B" : " S"),
         );
       }
-    commands.push("[] 0 d", "0 G", "0 g", `${round(0.25 * mm)} w`);
+    commands.push("[] 0 d", "0 G", "0 g", `${round(0.18 * mm)} w`);
     const stamp = project.settings.titleBlock || {},
       sx = width - margin - 180 * mm,
       sy = margin;
@@ -1197,14 +1293,16 @@
       stream2 = p2Commands.join("\n"),
       objects = [
         `<< /Type /Catalog /Pages 2 0 R >>`,
-        `<< /Type /Pages /Kids [3 0 R 10 0 R] /Count 2 >>`,
+        "",
         `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${round(width)} ${round(height)}] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>`,
         `<< /Type /Font /Subtype /Type0 /BaseFont /LiberationSans /Encoding /Identity-H /DescendantFonts [6 0 R] /ToUnicode 9 0 R >>`,
         `<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`,
       ];
     objects.push(...font.objects());
+    const secondPageId = objects.length + 1;
+    objects[1] = `<< /Type /Pages /Kids [3 0 R ${secondPageId} 0 R] /Count 2 >>`;
     objects.push(
-      `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${round(width)} ${round(height)}] /Resources << /Font << /F1 4 0 R >> >> /Contents 11 0 R >>`,
+      `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${round(width)} ${round(height)}] /Resources << /Font << /F1 4 0 R >> >> /Contents ${secondPageId + 1} 0 R >>`,
       `<< /Length ${stream2.length} >>\nstream\n${stream2}\nendstream`,
     );
     const encoder = new TextEncoder(),

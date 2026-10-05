@@ -18,6 +18,17 @@
   } = Joinery.Geometry;
   const { primitives, measure, draftingScene, fontSize, monochrome } =
     Joinery.Scene;
+  // Below this zoom the drawing is an overview. Keeping every annotation at
+  // constant screen size creates huge model-space labels and expensive routing.
+  // Shrink annotations with geometry instead; export still uses its paper scale.
+  const MIN_ANNOTATION_ZOOM = 0.125;
+  class PickChoice extends Error {
+    constructor(candidates, point) {
+      super("Vyberte objekt");
+      this.candidates = candidates;
+      this.point = point;
+    }
+  }
   class CanvasManager {
     constructor(canvas, getProject, callbacks = {}) {
       this.canvas = canvas;
@@ -76,9 +87,23 @@
       return { x: e.clientX - r.left, y: e.clientY - r.top };
     }
     bind() {
+      // Delete belongs to the drawing surface; editing a HUD or property field
+      // must keep normal text-editing semantics (especially Backspace).
+      window.addEventListener("keydown", (e) => {
+        if (
+          !["Delete", "Backspace"].includes(e.key) ||
+          e.defaultPrevented ||
+          e.target.closest?.(
+            "input,textarea,select,[contenteditable],dialog",
+          ) ||
+          document.querySelector("dialog[open]") ||
+          this.canvas.getClientRects().length === 0
+        )
+          return;
+        if (this.callbacks.deleteSelection?.()) e.preventDefault();
+      });
       this.canvas.addEventListener("contextmenu", (e) => {
         e.preventDefault();
-        this.callbacks.cancel?.();
       });
       this.canvas.addEventListener(
         "wheel",
@@ -97,6 +122,8 @@
         this.pointers.set(e.pointerId, p);
         this.canvas.setPointerCapture(e.pointerId);
         if (this.pointers.size === 2) {
+          this.callbacks.cancelGesture?.();
+          this.dragStart = null;
           const pts = [...this.pointers.values()];
           this.pinch = {
             distance: Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y),
@@ -121,7 +148,7 @@
       this.canvas.addEventListener("pointermove", (e) => {
         const p = this.eventPoint(e);
         if (this.pointers.has(e.pointerId)) this.pointers.set(e.pointerId, p);
-        if (this.dragStart && (e.buttons & 1)) {
+        if (this.dragStart && e.buttons & 1) {
           if (Math.hypot(p.x - this.dragStart.x, p.y - this.dragStart.y) > 5) {
             this.hasDragged = true;
           }
@@ -155,15 +182,23 @@
         this.invalidate();
       });
       const end = (e) => {
+        const drawing = !!this.dragStart && !this.panning && !this.pinch;
         this.pointers.delete(e.pointerId);
         this.pinch = null;
         if (this.panning) this.callbacks.viewChanged?.();
         this.panning = null;
         this.canvas.style.cursor = this.space ? "grab" : "crosshair";
-        if (e.button === 0 && this.hasDragged) {
+        if (
+          drawing &&
+          e.type !== "pointercancel" &&
+          e.button === 0 &&
+          this.hasDragged
+        ) {
           const pt = this.eventPoint(e);
           this.callbacks.dragEnd?.(this.toWorld(pt), e);
         }
+        if (drawing && (e.button === 0 || e.type === "pointercancel"))
+          this.callbacks.end?.(this.toWorld(this.eventPoint(e)), e);
         this.dragStart = null;
         this.hasDragged = false;
       };
@@ -173,10 +208,16 @@
         if (!this.panning) {
           this.cursor = null;
           this.snap = null;
+          this.eraseHover = [];
           this.invalidate();
         }
       });
       window.addEventListener("blur", () => {
+        this.callbacks.cancelGesture?.();
+        this.dragStart = null;
+        this.hasDragged = false;
+        this.pointers.clear();
+        this.pinch = null;
         this.space = false;
         this.panning = null;
         this.canvas.style.cursor = "crosshair";
@@ -221,30 +262,101 @@
     }
     visibleEntities() {
       const p = this.getProject(),
-        layers = new Map(p.layers.map((l) => [l.id, l]));
-      return p.entities.filter((e) => layers.get(e.layer)?.visible !== false);
+        visibility = p.layers
+          .map((l) => `${l.id}:${l.visible !== false}`)
+          .join("|"),
+        cached = this.visibleCache;
+      if (
+        cached?.project === p &&
+        cached.entities === p.entities &&
+        cached.count === p.entities.length &&
+        cached.visibility === visibility
+      )
+        return cached.visible;
+      const layers = new Map(p.layers.map((l) => [l.id, l]));
+      const visible = p.entities.filter(
+        (e) => layers.get(e.layer)?.visible !== false,
+      );
+      const result = visible.filter((e) =>
+        Joinery.GeometryEngine.GeometryEngine.annotationVisible(e, visible),
+      );
+      this.visibleCache = {
+        project: p,
+        entities: p.entities,
+        count: p.entities.length,
+        visibility,
+        visible: result,
+      };
+      return result;
     }
-    pick(p, { locked = false } = {}) {
+    invalidateScene() {
+      this.visibleCache = null;
+      this.sceneCache = null;
+      this.renderedScene = null;
+      this.invalidate();
+    }
+    annotationPaperScale() {
+      return 96 / 25.4 / Math.max(MIN_ANNOTATION_ZOOM, this.zoom);
+    }
+    /** Cursor, selection, pan and theme changes reuse the expensive layout. */
+    getScene() {
+      const project = this.getProject(),
+        settings = project.settings,
+        visible = this.visibleEntities(),
+        paperScale = this.annotationPaperScale(),
+        key = `${paperScale}|${settings.units}|${settings.dimensionTextHeight || 2.5}|${settings.dimensionTermination || "slash"}`;
+      if (this.sceneCache?.visible === visible && this.sceneCache.key === key)
+        return this.sceneCache.scene;
+      const scene = draftingScene(visible, settings.units, {
+        paperScale,
+        textHeight: settings.dimensionTextHeight || 2.5,
+        termination: settings.dimensionTermination,
+      });
+      this.sceneCache = { visible, key, scene };
+      this.renderedScene = new Map(
+        scene.map(({ entity, items }) => [entity.id, items]),
+      );
+      return scene;
+    }
+    requestPick(candidates, p) {
+      const override = this.pickOverride;
+      if (override && !override.used && distance(p, override.point) < 1e-6) {
+        override.used = true;
+        return override.entity;
+      }
+      if (this.pickInteractive && candidates.length > 1)
+        throw new PickChoice(candidates, p);
+      return candidates[0] || null;
+    }
+    pick(p, options = {}) {
+      return this.requestPick(this.pickCandidates(p, options), p);
+    }
+    pickCandidates(p, { locked = false } = {}) {
+      this.getScene?.();
       const layers = new Map(this.getProject().layers.map((l) => [l.id, l])),
         entities = this.visibleEntities().filter(
           (e) => locked || !layers.get(e.layer)?.locked,
         ),
         tolerance = 8 / this.zoom;
-      let nearest = null,
-        d = Infinity;
+      const hits = [];
       for (const e of entities) {
         let h = hitDistance(e, p);
-        if (e.type === "dimension" && this.renderedScene?.has(e.id)) {
+        if (
+          (["dimension", "leader", "radius"].includes(e.type) || e.symbolType) &&
+          this.renderedScene?.has(e.id)
+        ) {
           h = Infinity;
           for (const primitive of this.renderedScene.get(e.id)) {
-            if (
-              primitive.kind === "text" &&
-              Math.abs(p.x - primitive.p.x) <=
-                Joinery.Scene.textWidth(primitive) / 2 &&
-              p.y >= primitive.p.y - primitive.size * 0.22 &&
-              p.y <= primitive.p.y + primitive.size
-            )
-              h = 0;
+            if (primitive.kind === "text") {
+              const box = Joinery.Scene.textBox(primitive);
+              if (
+                p.x >= box.minX &&
+                p.x <= box.maxX &&
+                p.y >= box.minY &&
+                p.y <= box.maxY
+              )
+                h = 0;
+            }
             if (primitive.kind === "path")
               for (let i = 1; i < primitive.points.length; i++)
                 h = Math.min(
@@ -272,17 +384,15 @@
           )
             h = 0;
         }
-        if (h <= tolerance && h < d) {
-          d = h;
-          nearest = e;
-        }
+        if (h <= tolerance) hits.push({ entity: e, d: h });
       }
-      if (nearest) return nearest;
-      return (
-        [...entities]
-          .reverse()
-          .find((e) =>
-            e.type === "region"
+      const found = new Set(hits.map((h) => h.entity));
+      for (const e of [...entities].reverse()) {
+        if (
+          !found.has(e) &&
+          (e.type === "detail"
+            ? distance(p, e.points[0]) <= e.radius * e.factor
+            : e.type === "region"
               ? pointInRegion(p, e.polygons)
               : [
                   "panel",
@@ -294,9 +404,95 @@
                   "drill",
                 ].includes(e.type) &&
                 (e.type !== "polyline" || e.closed) &&
-                pointInPolygon(p, vertices(e)),
-          ) || null
-      );
+                pointInPolygon(p, vertices(e)))
+        )
+          hits.push({ entity: e, d: Infinity });
+      }
+      return hits.sort((a, b) => a.d - b.d).map((h) => h.entity);
+    }
+    /** Left-to-right contains; right-to-left crosses visible geometry. */
+    pickBox(a, b) {
+      this.getScene?.();
+      const G = Joinery.Geometry,
+        crossing = b.x < a.x,
+        lo = { x: Math.min(a.x, b.x), y: Math.min(a.y, b.y) },
+        hi = { x: Math.max(a.x, b.x), y: Math.max(a.y, b.y) },
+        inside = (q) =>
+          q.x >= lo.x && q.x <= hi.x && q.y >= lo.y && q.y <= hi.y,
+        corners = [lo, { x: hi.x, y: lo.y }, hi, { x: lo.x, y: hi.y }],
+        edges = corners.map((q, i) => [q, corners[(i + 1) % 4]]);
+      return this.visibleEntities().filter((e) => {
+        if (this.getProject().layers.find((l) => l.id === e.layer)?.locked)
+          return false;
+        // Automatic centre marks are drawing aids, not extra geometry that
+        // should prevent a window from containing a hole or a circle.
+        if (["circle", "drill"].includes(e.type)) {
+          const c = e.center,
+            r = e.radius;
+          if (!crossing)
+            return (
+              inside({ x: c.x - r, y: c.y - r }) &&
+              inside({ x: c.x + r, y: c.y + r })
+            );
+          const near = {
+            x: Math.max(lo.x, Math.min(hi.x, c.x)),
+            y: Math.max(lo.y, Math.min(hi.y, c.y)),
+          };
+          return (
+            distance(c, near) <= r &&
+            Math.max(...corners.map((q) => distance(c, q))) >= r
+          );
+        }
+        const items =
+          this.renderedScene?.get(e.id) ||
+          primitives(e, this.getProject().settings.units, {
+            paperScale: this.annotationPaperScale(),
+          });
+        let allInside = true,
+          touches = false;
+        for (const item of items) {
+          if (item.kind === "circle") {
+            const c = item.center,
+              r = item.radius;
+            allInside &&=
+              inside({ x: c.x - r, y: c.y - r }) &&
+              inside({ x: c.x + r, y: c.y + r });
+            const near = {
+              x: Math.max(lo.x, Math.min(hi.x, c.x)),
+              y: Math.max(lo.y, Math.min(hi.y, c.y)),
+            };
+            touches ||=
+              distance(c, near) <= r &&
+              Math.max(...corners.map((q) => distance(c, q))) >= r;
+            continue;
+          }
+          let paths;
+          if (item.kind === "text") {
+            const box = Joinery.Scene.textBox(item);
+            paths = [
+              [
+                { x: box.minX, y: box.minY },
+                { x: box.maxX, y: box.minY },
+                { x: box.maxX, y: box.maxY },
+                { x: box.minX, y: box.maxY },
+              ],
+            ];
+          } else if (item.kind === "region") paths = item.polygons.flat();
+          else
+            paths = [item.kind === "arc" ? arcPoints(item) : item.points || []];
+          for (const pts of paths) {
+            allInside &&= pts.every(inside);
+            touches ||= pts.some(inside);
+            const closed =
+              item.closed || item.kind === "text" || item.kind === "region";
+            for (let i = 1; i < pts.length + (closed ? 1 : 0); i++)
+              touches ||= edges.some(([c, d]) =>
+                G.intersection(pts[i - 1], pts[i % pts.length], c, d),
+              );
+          }
+        }
+        return items.length > 0 && (crossing ? touches : allInside);
+      });
     }
     invalidate() {
       if (this.frame) return;
@@ -327,18 +523,11 @@
       ctx.fillStyle = c.canvas;
       ctx.fillRect(0, 0, this.width, this.height);
       const p = this.getProject(),
-        spacing = adaptiveSpacing(this.zoom);
+        spacing = adaptiveSpacing(this.zoom, 36, p.settings.gridSize);
       this.callbacks.gridChanged?.(spacing);
       if (p.settings.grid) this.grid(spacing, c);
       const layers = new Map(p.layers.map((l) => [l.id, l]));
-      const scene = draftingScene(this.visibleEntities(), p.settings.units, {
-        paperScale: 96 / 25.4 / this.zoom,
-        textHeight: p.settings.dimensionTextHeight || 2.5,
-        termination: p.settings.dimensionTermination,
-      });
-      this.renderedScene = new Map(
-        scene.map(({ entity, items }) => [entity.id, items]),
-      );
+      const scene = this.getScene();
       for (const { entity: e, items } of scene) {
         ctx.globalAlpha = this.booleanOperands?.has(e.id) ? 0.22 : 1;
         this.drawEntity(
@@ -354,12 +543,61 @@
       for (const e of this.preview)
         this.drawEntity(e, c.accent, false, c, true);
       ctx.globalAlpha = 1;
-      if (
-        this.snap?.point &&
-        this.snap.kind &&
-        this.snap.kind !== "Grid" &&
-        this.snap.kind !== "Ortho"
-      ) {
+      if (this.eraseHover?.length) {
+        ctx.save();
+        for (const id of this.eraseHover)
+          for (const primitive of this.renderedScene.get(id) || [])
+            this.drawPrimitive(
+              primitive,
+              "#ff3333",
+              c,
+              false,
+              document.documentElement.dataset.theme === "light",
+            );
+        ctx.restore();
+      }
+      if (this.pickHover) {
+        const entity = this.pickHover;
+        const items = this.sceneCache.scene.find(
+          (record) => record.entity === entity,
+        )?.items;
+        this.drawEntity(entity, c.accent, true, c, false, items);
+      }
+      if (this.selectionBox) {
+        const box = this.selectionBox,
+          a = this.toScreen(box.a),
+          b = this.toScreen(box.b);
+        ctx.save();
+        ctx.strokeStyle = box.erase ? "#ff3333" : c.accent;
+        ctx.fillStyle = box.erase
+          ? "rgba(255,51,51,.08)"
+          : "rgba(127,127,127,.12)";
+        ctx.lineWidth = 1;
+        ctx.setLineDash(box.b.x < box.a.x ? [5, 3] : []);
+        ctx.fillRect(a.x, a.y, b.x - a.x, b.y - a.y);
+        ctx.strokeRect(a.x, a.y, b.x - a.x, b.y - a.y);
+        ctx.restore();
+      }
+      if (this.toolVector) {
+        const a = this.toScreen(this.toolVector.a),
+          b = this.toScreen(this.toolVector.b);
+        ctx.save();
+        ctx.strokeStyle = c.accent;
+        ctx.lineWidth = 1;
+        ctx.setLineDash([5, 4]);
+        ctx.beginPath();
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo(b.x, b.y);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        for (const q of [a, b]) {
+          ctx.beginPath();
+          ctx.arc(q.x, q.y, 3, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+        ctx.restore();
+      }
+      if (this.snap?.point && this.snap.kind && this.snap.kind !== "Ortho") {
         const q = this.toScreen(this.snap.point);
         ctx.strokeStyle = c.accent;
         ctx.lineWidth = 1;
@@ -382,6 +620,7 @@
         ctx.fillText(
           {
             Endpoint: "Koncový bod",
+            Grid: "Mřížka",
             Midpoint: "Střed úsečky",
             Center: "Střed",
             Intersection: "Průsečík",
@@ -392,6 +631,20 @@
           q.x + 12,
           q.y - 10,
         );
+      }
+      if (this.diagnostics) {
+        ctx.save();
+        ctx.strokeStyle = "#ff3333";
+        ctx.fillStyle = "#ff3333";
+        ctx.lineWidth = 1.5;
+        for (const marker of this.diagnostics) {
+          const q = this.toScreen(marker.point);
+          ctx.beginPath();
+          ctx.arc(q.x, q.y, 5, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.fillRect(q.x - 1, q.y - 1, 2, 2);
+        }
+        ctx.restore();
       }
       if (this.cursor && !this.space && !this.panning) {
         const q = this.toScreen(this.snap?.point || this.cursor);
@@ -416,17 +669,21 @@
         lo = this.toWorld({ x: 0, y: this.height }),
         hi = this.toWorld({ x: this.width, y: 0 });
       ctx.lineWidth = 1;
+      const majorEvery = Math.round(
+        10 ** (Math.floor(Math.log10(step)) + 1) / step,
+      );
       for (let pass = 0; pass < 2; pass++) {
         ctx.strokeStyle = pass ? c["grid-major"] : c.grid;
+        ctx.lineWidth = pass ? 1.25 : 0.7;
         ctx.beginPath();
         for (let x = Math.ceil(lo.x / step); x <= hi.x / step; x++) {
-          if ((x % 5 === 0) !== !!pass) continue;
+          if ((x % majorEvery === 0) !== !!pass) continue;
           const s = Math.round(this.toScreen({ x: x * step, y: 0 }).x) + 0.5;
           ctx.moveTo(s, 0);
           ctx.lineTo(s, this.height);
         }
         for (let y = Math.ceil(lo.y / step); y <= hi.y / step; y++) {
-          if ((y % 5 === 0) !== !!pass) continue;
+          if ((y % majorEvery === 0) !== !!pass) continue;
           const s = Math.round(this.toScreen({ x: 0, y: y * step }).y) + 0.5;
           ctx.moveTo(0, s);
           ctx.lineTo(this.width, s);
@@ -452,11 +709,17 @@
           : monochrome(color.startsWith("#") ? color : "#cccccc", light);
       for (const primitive of items ||
         primitives(e, this.getProject().settings.units, {
-          paperScale: 96 / 25.4 / this.zoom,
+          paperScale: this.annotationPaperScale(),
           textHeight: this.getProject().settings.dimensionTextHeight || 2.5,
           termination: this.getProject().settings.dimensionTermination,
         }))
-        this.drawPrimitive(primitive, stroke, c, preview, light);
+        this.drawPrimitive(
+          primitive,
+          selected ? stroke : primitive.stroke || stroke,
+          c,
+          preview,
+          light,
+        );
       if (selected) {
         ctx.fillStyle = c.canvas;
         ctx.strokeStyle = c.accent;
@@ -476,8 +739,23 @@
     drawPrimitive(p, color, c, preview, light) {
       const ctx = this.ctx;
       ctx.strokeStyle = color;
-      ctx.lineWidth = p.banding ? 3 : p.thin ? 0.8 : 1.3;
-      ctx.setLineDash(preview ? [5, 4] : p.dash ? [5, 4] : []);
+      ctx.globalAlpha = p.opacity ?? 1;
+      ctx.lineWidth = p.banding
+        ? 3
+        : p.lineWeight
+          ? (p.lineWeight * 96) / 25.4
+          : p.thin
+            ? 0.8
+            : 1.3;
+      ctx.setLineDash(
+        preview
+          ? [5, 4]
+          : p.lineStyle === "dashdot"
+            ? [10, 4, 2, 4]
+            : p.lineStyle === "dashed" || p.dash
+              ? [5, 4]
+              : [],
+      );
       if (p.kind === "text") {
         const s = this.toScreen(p.p),
           size = p.annotation
@@ -495,18 +773,38 @@
           ctx.rotate(-Math.PI / 2);
           ctx.fillStyle = c.canvas;
           if (p.anchor === "start") {
-            ctx.fillRect(-padX, -size - padY, width + padX * 2, size + padY * 2);
+            ctx.fillRect(
+              -padX,
+              -size - padY,
+              width + padX * 2,
+              size + padY * 2,
+            );
           } else {
-            ctx.fillRect(-width / 2 - padX, -size - padY, width + padX * 2, size + padY * 2);
+            ctx.fillRect(
+              -(p.anchor === "end" ? width : width / 2) - padX,
+              -size - padY,
+              width + padX * 2,
+              size + padY * 2,
+            );
           }
           ctx.fillStyle = color;
           ctx.fillText(p.text, 0, 0);
         } else {
           ctx.fillStyle = c.canvas;
           if (p.anchor === "start") {
-            ctx.fillRect(s.x - padX, s.y - size - padY, width + padX * 2, size + padY * 2);
+            ctx.fillRect(
+              s.x - padX,
+              s.y - size - padY,
+              width + padX * 2,
+              size + padY * 2,
+            );
           } else {
-            ctx.fillRect(s.x - width / 2 - padX, s.y - size - padY, width + padX * 2, size + padY * 2);
+            ctx.fillRect(
+              s.x - (p.anchor === "end" ? width : width / 2) - padX,
+              s.y - size - padY,
+              width + padX * 2,
+              size + padY * 2,
+            );
           }
           ctx.fillStyle = color;
           ctx.fillText(p.text, s.x, s.y);
@@ -564,8 +862,9 @@
         ctx.restore();
       }
       ctx.stroke();
+      ctx.globalAlpha = 1;
       ctx.setLineDash([]);
     }
   }
-  Joinery.CanvasManager = { CanvasManager };
+  Joinery.CanvasManager = { CanvasManager, MIN_ANNOTATION_ZOOM, PickChoice };
 })((globalThis.Joinery = globalThis.Joinery || {}));

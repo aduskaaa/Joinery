@@ -287,13 +287,6 @@ html[data-theme="light"] .primary-button {
   align-items: center;
   gap: 16px;
 }
-  border-radius: 50%;
-}
-.workspace-meta {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-}
 .local-badge {
   font-size: 9px;
   letter-spacing: 1.35px;
@@ -1318,7 +1311,6 @@ dialog::backdrop {
   .local-badge {
     display: none;
   }
-
 }
 @media (max-width: 800px) {
   .inspector-sidebar {
@@ -1850,4 +1842,780 @@ dialog::backdrop {
   .export-options {
     grid-template-columns: 1fr;
   }
+}
+/* Compact CAD workspace. All controls intentionally use square corners. */
+:root[data-theme="light"] {
+  --grid: #cfcfcf;
+  --grid-major: #a6a6a6;
+}
+.tool-group {
+  position: relative;
+  display: flex;
+  border: 1px solid var(--border);
+  flex: none;
+}
+.tool-group-primary,
+.tool-group-arrow {
+  border: 0;
+  white-space: nowrap;
+  height: 34px;
+  background: var(--surface);
+  color: var(--text);
+  padding: 0 9px;
+  font-size: 12px;
+}
+.tool-group-arrow {
+  border-left: 1px solid var(--border);
+  padding: 0 7px;
+}
+.tool-flyout {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  min-width: 210px;
+  z-index: 40;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  padding: 4px;
+  box-shadow: 0 6px 20px #0003;
+}
+.tool-flyout button {
+  display: block;
+  text-align: left;
+  width: 100%;
+  padding: 8px 10px;
+  background: transparent;
+  border: 0;
+  color: var(--text);
+  font-size: 12px;
+}
+.tool-flyout button:hover {
+  background: var(--surface-raised, #7772);
+}
+.property-category {
+  border-bottom: 1px solid var(--border);
+  padding: 9px 0;
+}
+.property-category summary {
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  margin-bottom: 10px;
+}
+.property-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.property-fields label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--muted);
+  min-width: 0;
+}
+.property-fields input,
+.property-fields select {
+  width: 100%;
+  min-width: 0;
+}
+.property-fields input[type="color"] {
+  height: 30px;
+  padding: 2px;
+}
+.physical-part-check {
+  grid-column: 1/-1;
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: center;
+  white-space: nowrap;
+}
+.physical-part-check input {
+  width: auto !important;
+}
+.inspector-count {
+  font-size: 12px;
+}
+.inspector-actions {
+  display: flex;
+  gap: 5px;
+  margin-top: 10px;
+}
+.tool-tooltip {
+  max-width: 264px;
+  pointer-events: none;
+  padding: 12px;
+}
+.tool-tooltip p {
+  font-size: 12px;
+  line-height: 1.5;
+}
+#app-dialog {
+  position: fixed;
+  inset: 120px auto auto 14px;
+  margin: 0;
+  width: 360px;
+  max-width: calc(100vw - 28px);
+  max-height: 70vh;
+  overflow: auto;
+  box-shadow: 0 6px 22px #0004;
+  border: 1px solid var(--border);
+}
+#app-dialog .dialog-header {
+  padding: 12px;
+}
+#dialog-body {
+  padding: 12px !important;
+}
+.dialog-form-fields {
+  grid-template-columns: 1fr !important;
+}
+.dialog-actions {
+  padding: 12px;
+}
+#bom-totals {
+  padding: 16px 0;
+  font-size: 12px;
+  border-top: 1px solid var(--border);
+  line-height: 1.8;
+}
+.part-link {
+  padding: 0;
+  background: none;
+  border: 0;
+  color: var(--text);
+  text-align: left;
+}
+.remove-part {
+  margin-left: 12px;
+  background: none;
+  border: 0;
+  color: var(--muted);
+}
+#sheet-composer {
+  grid-column: 1/-1;
+  grid-row: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  overflow: hidden;
+  background: var(--canvas);
+}
+.composer-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px;
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+  font-size: 12px;
+}
+.composer-bar label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.composer-bar input {
+  width: 60px;
+}
+.composer-workspace {
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  overflow: hidden;
+  flex: 1;
+  min-height: 0;
+}
+#composer-settings {
+  padding: 16px;
+  border-right: 1px solid var(--border);
+  overflow: auto;
+}
+#composer-settings label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 12px;
+  margin-bottom: 10px;
+}
+#composer-settings p,
+#composer-settings small {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.6;
+}
+#composer-settings button {
+  margin-bottom: 8px;
+  width: 100%;
+}
+#composer-settings h3 {
+  font-size: 13px;
+  margin: 12px 0;
+}
+.composer-scroll {
+  overflow: auto;
+  padding: 24px;
+  background: #7772;
+}
+#sheet-canvas {
+  display: block;
+  background: white;
+  box-shadow: 0 0 0 1px #888;
+  touch-action: none;
+  cursor: move;
+}
+[hidden] {
+  display: none !important;
+}
+.toolbar {
+  overflow: visible;
+  position: relative;
+  z-index: 25;
+}
+.tool-stack {
+  overflow: visible;
+}
+/* Compact SVG ribbon; menus share a fixed, bounded viewport coordinate system. */
+.app-header {
+  height: 42px;
+  padding: 0 12px;
+}
+.toolbar {
+  min-height: 36px;
+  height: 36px;
+  padding: 2px 12px;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.tool-stack {
+  gap: 5px;
+}
+.tool-group-primary {
+  width: 34px;
+  height: 28px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+}
+.tool-group-arrow {
+  height: 28px;
+  width: 22px;
+  flex: 0 0 22px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+}
+.tool-group-arrow svg {
+  display: block;
+  width: 12px;
+  height: 12px;
+}
+.tool-group-arrow:hover,
+.tool-group-arrow[aria-expanded="true"] {
+  background: var(--hover);
+}
+.tool-group-arrow[aria-expanded="true"] svg {
+  transform: rotate(180deg);
+}
+.tool-group-arrow:focus-visible {
+  outline: 1px solid var(--text);
+  outline-offset: -2px;
+}
+
+/* One square, monochrome select menu across panels, tools and print sheets. */
+.custom-select-native {
+  display: none !important;
+}
+.custom-select {
+  display: inline-flex;
+  min-width: 0;
+  vertical-align: middle;
+}
+.custom-select-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  min-width: 0;
+  min-height: 32px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 12px;
+  text-align: left;
+}
+.custom-select-value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.custom-select-trigger svg {
+  width: 12px;
+  height: 12px;
+  display: block;
+}
+.custom-select-trigger:hover,
+.custom-select-trigger[aria-expanded="true"] {
+  background: var(--hover);
+}
+.custom-select-trigger[aria-expanded="true"] svg {
+  transform: rotate(180deg);
+}
+.custom-select-trigger:focus-visible {
+  outline: 1px solid var(--text);
+  outline-offset: -2px;
+}
+.custom-select-menu {
+  position: fixed;
+  z-index: 250;
+  width: max-content;
+  padding: 3px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12px;
+}
+.custom-select-menu button {
+  display: block;
+  width: 100%;
+  min-height: 30px;
+  padding: 6px 9px;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+.custom-select-menu button.highlighted,
+.custom-select-menu button:hover {
+  background: var(--hover);
+}
+.custom-select-menu button[aria-selected="true"] {
+  box-shadow: inset 2px 0 var(--text);
+  font-weight: 600;
+}
+.property-fields .custom-select,
+.dialog-form-fields .custom-select,
+#composer-settings .custom-select {
+  width: 100%;
+}
+.footer-tool-options .custom-select {
+  max-width: 210px;
+  flex-shrink: 0;
+}
+.footer-tool-options .custom-select-trigger,
+.unit-picker-footer .custom-select-trigger {
+  min-height: 28px;
+  padding: 3px 6px;
+}
+.unit-picker-footer .custom-select {
+  width: 60px;
+}
+.composer-bar > .custom-select {
+  min-width: 180px;
+}
+.new-project-note {
+  margin: 0;
+  border: 0;
+  padding: 0;
+}
+#app-dialog:modal {
+  inset: 0;
+  margin: auto;
+  width: 460px;
+  max-height: calc(100dvh - 28px);
+}
+.tool-button {
+  height: 28px;
+  width: 30px;
+}
+.tool-flyout {
+  position: fixed;
+  min-width: 220px;
+  width: max-content;
+  max-width: calc(100vw - 8px);
+  overflow: auto;
+  padding: 3px;
+  top: auto;
+  left: auto;
+}
+.tool-flyout button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 32px;
+  padding: 4px 9px;
+  white-space: nowrap;
+}
+.tool-flyout button svg {
+  width: 18px;
+  height: 18px;
+}
+.tool-flyout button:focus-visible {
+  outline: 1px solid var(--text);
+  outline-offset: -1px;
+}
+.tool-group-primary.active,
+.tool-flyout button.active {
+  background: var(--surface-2);
+  box-shadow: inset 0 -2px var(--text);
+}
+.footer-tool-options {
+  justify-content: flex-start;
+}
+.footer-tool-options strong {
+  display: none;
+}
+.footer-tool-options input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  flex: none;
+}
+.footer-tool-options input[type="text"] {
+  width: 130px;
+}
+.footer-tool-options label,
+.footer-tool-options button {
+  flex-shrink: 0;
+}
+.footer-tool-options .select-hint {
+  flex-shrink: 1;
+  min-width: 0;
+}
+.toolbar-separator:has(+ #editing-tools:empty) {
+  display: none;
+}
+@media (max-width: 900px) {
+  .composer-workspace {
+    grid-template-columns: 190px 1fr;
+  }
+  .toolbar {
+    padding-inline: 6px;
+  }
+}
+
+input[type="checkbox"],
+input[type="radio"],
+input[type="range"] {
+  accent-color: var(--text);
+}
+
+/* Export stays anchored to its trigger, rather than using the canvas dialog. */
+.export-control {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.export-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  width: 244px;
+  z-index: 80;
+  border: 1px solid var(--muted);
+  background: var(--surface);
+  padding: 4px;
+  box-shadow: 0 6px 18px #0003;
+}
+.export-dropdown button {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  text-align: left;
+  padding: 10px 9px;
+  min-height: 50px;
+}
+.export-dropdown button:hover,
+.export-dropdown button:focus-visible {
+  background: var(--surface-2);
+  outline: 1px solid var(--muted);
+  outline-offset: -1px;
+}
+.export-dropdown strong {
+  display: block;
+  font-size: 13px;
+  font-weight: 500;
+}
+.export-dropdown small {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.app-header {
+  position: relative;
+  z-index: 35;
+}
+/* The paper workspace exposes only project identity, theme and help above it. */
+.print-preview
+  .app-header
+  > :not(.brand):not(#project-title):not(.header-actions),
+.print-preview .header-actions > :not(#theme):not(#help),
+.print-preview .toolbar,
+.print-preview .status-bar {
+  display: none !important;
+}
+.print-preview .brand {
+  display: flex !important;
+}
+.print-preview .header-actions {
+  margin-left: auto;
+}
+/* Readable, explicit snap states. A second row keeps tool options usable. */
+.status-bar {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-areas: "cursor options snaps";
+  height: auto;
+  min-height: 44px;
+  padding: 5px 12px;
+  gap: 12px;
+  color: var(--text);
+}
+.cursor-status {
+  grid-area: cursor;
+}
+.footer-tool-options {
+  grid-area: options;
+}
+.snap-controls {
+  grid-area: snaps;
+  height: auto;
+  gap: 7px;
+  font-size: 12px;
+  color: var(--text);
+}
+.snap-controls button {
+  height: 30px;
+  padding: 0 8px;
+  font-size: 12px;
+  letter-spacing: 0;
+  text-transform: none;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  white-space: nowrap;
+}
+.snap-controls button.active {
+  background: var(--text);
+  color: var(--canvas);
+  border-color: var(--text);
+}
+.snap-controls .tiny-key {
+  display: inline;
+  font-size: 10px;
+  color: inherit;
+  border-color: currentColor;
+  margin-left: 5px;
+}
+.snap-spacing-control {
+  font-size: 12px;
+  gap: 5px;
+  color: var(--text);
+  white-space: nowrap;
+}
+.snap-spacing-control input {
+  height: 30px;
+  width: 66px;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--muted);
+  padding: 3px 6px;
+}
+#grid-spacing {
+  display: inline;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.footer-tool-options input,
+.footer-tool-options select {
+  height: 28px;
+  font-size: 12px;
+}
+.footer-tool-options label,
+.footer-tool-options .select-hint {
+  font-size: 12px;
+}
+@media (max-width: 1250px) {
+  .status-bar {
+    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-areas: "cursor options" "snaps snaps";
+    gap: 5px 12px;
+  }
+  .snap-controls {
+    justify-content: flex-end;
+    flex-wrap: wrap;
+  }
+  .footer-tool-options {
+    min-height: 30px;
+  }
+}
+@media (max-width: 650px) {
+  .snap-controls {
+    justify-content: flex-start;
+  }
+  #grid-spacing {
+    display: none;
+  }
+  .status-bar {
+    padding-inline: 6px;
+  }
+  .snap-controls .tiny-key {
+    display: none;
+  }
+}
+
+/* Temporary CAD feedback; dimensions and displacements are model-space mm. */
+.cad-floating-hud {
+  pointer-events: none;
+  position: fixed;
+  z-index: 35;
+  width: 248px;
+  box-sizing: border-box;
+  padding: 10px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 4px 16px #0003;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.cad-floating-hud:focus-within {
+  pointer-events: auto;
+}
+.cad-floating-hud[hidden],
+.print-preview .cad-floating-hud {
+  display: none;
+}
+.cad-floating-hud strong {
+  display: block;
+  margin-bottom: 8px;
+}
+.hud-metrics {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px 6px;
+  line-height: 1.6;
+  margin-bottom: 6px;
+}
+.hud-metrics span {
+  white-space: nowrap;
+}
+.hud-metrics:empty {
+  display: none;
+}
+.hud-fields {
+  display: flex;
+  gap: 8px;
+}
+.hud-fields label {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+}
+.hud-fields input {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 5px;
+  border: 1px solid var(--border);
+  background: var(--canvas);
+  color: var(--text);
+  font: inherit;
+}
+.hud-fields input:disabled {
+  opacity: 0.45;
+}
+.hud-fields input:focus {
+  outline: 1px solid var(--text);
+  outline-offset: 1px;
+}
+.hud-fields input[aria-invalid="true"] {
+  border-color: #ff3333;
+  outline-color: #ff3333;
+}
+.cad-floating-hud p {
+  margin: 8px 0 0;
+  color: var(--muted);
+  line-height: 1.5;
+}
+.standalone-tool {
+  border: 1px solid var(--border);
+  margin-left: 4px;
+}
+.standalone-tool {
+  height: 30px;
+  width: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: var(--surface);
+  color: var(--text);
+}
+.standalone-tool svg {
+  width: 18px;
+  height: 18px;
+}
+.standalone-tool.active {
+  border-bottom: 2px solid var(--text);
+}
+
+.cad-pick-menu {
+  position: fixed;
+  z-index: 70;
+  width: min(300px, calc(100vw - 16px));
+  max-height: min(360px, calc(100vh - 16px));
+  overflow: auto;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  padding: 4px;
+  box-sizing: border-box;
+  box-shadow: 0 6px 20px #0003;
+}
+.cad-pick-menu[hidden] {
+  display: none;
+}
+.cad-pick-menu strong {
+  display: block;
+  padding: 8px;
+  font-size: 12px;
+}
+.cad-pick-menu button {
+  display: block;
+  width: 100%;
+  padding: 8px;
+  text-align: left;
+  border: 0;
+  color: var(--text);
+  background: transparent;
+}
+.cad-pick-menu button span,
+.cad-pick-menu button small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cad-pick-menu button small {
+  color: var(--muted);
+  font-size: 10px;
+  margin-top: 3px;
+}
+.cad-pick-menu button:hover,
+.cad-pick-menu button:focus-visible {
+  background: var(--canvas);
+  outline: 1px solid var(--text);
+  outline-offset: -1px;
+}
+.cad-pick-menu .pick-cancel {
+  border-top: 1px solid var(--border);
+  color: var(--muted);
 }

@@ -359,7 +359,14 @@
     else if (entity.type === "circle" || entity.type === "drill")
       polygons = [[circleRing(entity.center, entity.radius, tolerance)]];
     else if (entity.type === "slot") polygons = [[slotRing(entity, tolerance)]];
-    else polygons = [[entity.points]];
+    else
+      polygons = [
+        [
+          entity.bulges?.some(Boolean)
+            ? Joinery.Geometry.vertices(entity)
+            : entity.points,
+        ],
+      ];
     return validatePolygons(polygons, budget);
   }
 

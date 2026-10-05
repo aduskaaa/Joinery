@@ -34,6 +34,9 @@
       delta = start + 2 * segments,
       range = delta + 2 * segments;
     function glyph(cp) {
+      // The technical diameter sign is drawn with the embedded slashed-O glyph.
+      // Keep its original Unicode identity in the PDF's separate CID mapping.
+      if (cp === 0x2300) cp = 0x00d8;
       for (let i = 0; i < segments; i++)
         if (cp <= u16(end + 2 * i)) {
           if (cp < u16(start + 2 * i)) return 0;
@@ -62,14 +65,19 @@
   }
   function context() {
     const m = load(),
-      used = new Map();
+      used = new Map(),
+      characters = new Map();
     function encode(text) {
       let hex = "";
       for (const ch of String(text)) {
         const cp = ch.codePointAt(0),
           gid = m.glyph(cp);
-        if (!used.has(gid)) used.set(gid, cp);
-        hex += gid.toString(16).padStart(4, "0");
+        if (!used.has(cp)) {
+          const cid = used.size + 1;
+          used.set(cp, { cid, gid });
+          characters.set(cid, cp);
+        }
+        hex += used.get(cp).cid.toString(16).padStart(4, "0");
       }
       return `<${hex}>`;
     }
@@ -79,8 +87,12 @@
           sum + (m.advance(m.glyph(ch.codePointAt(0))) * size) / 1000,
         0,
       );
-    function objects() {
-      const pairs = [...used.entries()],
+    function objects(base = 6) {
+      const pairs = [...used.entries()].map(([cp, { cid, gid }]) => ({
+          cp,
+          cid,
+          gid,
+        })),
         hex = (n) => n.toString(16).padStart(4, "0");
       const map = [
         "/CIDInit /ProcSet findresource begin",
@@ -94,16 +106,22 @@
         map.push(
           `${chunk.length} beginbfchar`,
           ...chunk.map(
-            ([g, cp]) => `<${hex(g)}> <${cp <= 65535 ? hex(cp) : "FFFD"}>`,
+            ({ cid, cp }) =>
+              `<${hex(cid)}> <${cp <= 65535 ? hex(cp) : hex(0xd800 + ((cp - 0x10000) >> 10)) + hex(0xdc00 + ((cp - 0x10000) & 1023))}>`,
           ),
           "endbfchar",
         );
       }
       map.push("endcmap CMapName currentdict /CMap defineresource pop end end");
       const cm = map.join("\n");
+      const cidMap = new Uint8Array((pairs.length + 1) * 2);
+      for (const { cid, gid } of pairs) {
+        cidMap[cid * 2] = gid >> 8;
+        cidMap[cid * 2 + 1] = gid & 255;
+      }
       return [
-        `<< /Type /Font /Subtype /CIDFontType2 /BaseFont /LiberationSans /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /FontDescriptor 7 0 R /CIDToGIDMap /Identity /W [${pairs.map(([g]) => `${g} [${Math.round(m.advance(g))}]`).join(" ")}] >>`,
-        `<< /Type /FontDescriptor /FontName /LiberationSans /Flags 32 /FontBBox [${m.bbox.map(Math.round).join(" ")}] /ItalicAngle 0 /Ascent ${Math.round(m.ascent)} /Descent ${Math.round(m.descent)} /CapHeight ${Math.round(m.capHeight * 1000)} /StemV 80 /FontFile2 8 0 R >>`,
+        `<< /Type /Font /Subtype /CIDFontType2 /BaseFont /LiberationSans /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /FontDescriptor ${base + 1} 0 R /CIDToGIDMap ${base + 4} 0 R /W [${pairs.map(({ cid, gid }) => `${cid} [${Math.round(m.advance(gid))}]`).join(" ")}] >>`,
+        `<< /Type /FontDescriptor /FontName /LiberationSans /Flags 32 /FontBBox [${m.bbox.map(Math.round).join(" ")}] /ItalicAngle 0 /Ascent ${Math.round(m.ascent)} /Descent ${Math.round(m.descent)} /CapHeight ${Math.round(m.capHeight * 1000)} /StemV 80 /FontFile2 ${base + 2} 0 R >>`,
         [
           new TextEncoder().encode(
             `<< /Length ${m.bytes.length} /Length1 ${m.bytes.length} >>\nstream\n`,
@@ -112,11 +130,19 @@
           new TextEncoder().encode("\nendstream"),
         ],
         `<< /Length ${cm.length} >>\nstream\n${cm}\nendstream`,
+        [
+          new TextEncoder().encode(`<< /Length ${cidMap.length} >>\nstream\n`),
+          cidMap,
+          new TextEncoder().encode("\nendstream"),
+        ],
       ];
     }
     const decode = (hex) =>
       (hex.match(/.{4}/g) || [])
-        .map((g) => String.fromCodePoint(used.get(parseInt(g, 16)) || 0xfffd))
+        .map((g) => {
+          const cp = characters.get(parseInt(g, 16)) || 0xfffd;
+          return String.fromCodePoint(cp === 0x2300 ? 0x00d8 : cp);
+        })
         .join("");
     return { ...m, encode, decode, width, objects };
   }

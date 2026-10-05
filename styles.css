@@ -2619,3 +2619,20 @@ input[type="range"] {
   border-top: 1px solid var(--border);
   color: var(--muted);
 }
+
+.property-fields .checkbox-label {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.property-fields .checkbox-label input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  margin: 0;
+  accent-color: var(--text);
+}
+.property-fields > .select-hint {
+  grid-column: 1 / -1;
+}

@@ -65,7 +65,7 @@
     return p ? `${p.standard} · ${p.grade}` : "Unclassified";
   };
   // Material symbols describe a section, not a strength grade or a surface texture.
-  const kinds = Object.freeze([
+  const savedKinds = Object.freeze([
     {
       id: "plywood",
       name: "Překližka",
@@ -143,40 +143,131 @@
       ["sawdust", "Pilinová deska", "PID"],
       ["shive-sanded", "Pazdeřová deska – broušená", "PAD-B"],
       ["shive-unsanded", "Pazdeřová deska – nebroušená", "PAD-N"],
-    ].map(([id,name,code]) => ({id,name,code,pattern:"board",note:"Tenké šrafy kolmo k líci; značka podle tabulky 2 poslané předlohy."})),
-    {id:"solid-panel",name:"Spárovka",code:"SP",pattern:"longitudinal",note:"Spárovka se podle předlohy označuje SP."},
+    ].map(([id, name, code]) => ({
+      id,
+      name,
+      code,
+      pattern: "board",
+      note: "Tenké šrafy kolmo k líci; značka podle tabulky 2 poslané předlohy.",
+    })),
+    {
+      id: "solid-panel",
+      name: "Spárovka",
+      code: "SP",
+      pattern: "longitudinal",
+      note: "Spárovka se podle předlohy označuje SP.",
+    },
     ...[
-      ["metal","Kovy","diagonal"], ["plastic","Plasty","plastic"],
-      ["rubber","Pryž","rubber"], ["stone","Kámen","stone"],
-      ["putty","Tmely","putty"], ["insulation","Izolace","insulation"],
-    ].map(([id,name,pattern])=>({id,name,pattern,code:"",note:"Grafické označení podle tabulky 4 poslané předlohy."})),
+      ["metal", "Kovy", "diagonal"],
+      ["plastic", "Plasty", "plastic"],
+      ["rubber", "Pryž", "rubber"],
+      ["stone", "Kámen", "stone"],
+      ["putty", "Tmely", "putty"],
+      ["insulation", "Izolace", "insulation"],
+    ].map(([id, name, pattern]) => ({
+      id,
+      name,
+      pattern,
+      code: "",
+      note: "Grafické označení podle tabulky 4 poslané předlohy.",
+    })),
   ]);
-  const kind = (id) => kinds.find((k) => k.id === id) || null;
-  const species = Object.freeze([
-    ["SM","Smrk"],["JD","Jedle"],["DG","Douglaska"],["BO","Borovice"],
-    ["VJ","Vejmutovka"],["MD","Modřín"],["DB","Dub"],["CER","Dub cer"],
-    ["BK","Buk"],["JS","Jasan"],["JV","Javor"],["AK","Akát"],["HB","Habr"],
-    ["JL","Jilm"],["OR","Ořešák vlašský"],["BR","Bříza"],["SV","Švestka"],
-    ["TR","Třešeň"],["LP","Lípa"],["OL","Olše"],["TP","Topol"],["KS","Jírovec"],
-    ["ABA","Abachi"],["ANI","Aningeri"],["AVO","Avodire"],["BUB","Bubinga"],
-    ["DIB","Dibetou"],["EBE","Eben"],["KTO","Koto"],["LMB","Limba"],
-    ["MAH","Mahagon"],["MAC","Makore"],["MAN","Mansonia"],["OKU","Okoume"],
-    ["OVE","Ovengol"],["PAL","Paldao"],["PLR","Palisandr"],["TEK","Teak"],["ZIN","Zingana"],
-  ].map(([id,name])=>Object.freeze({id,name:`${name} (${id})`})));
-  const markingKeys = Object.freeze(["woodSpecies","markSize","showMaterialLabel","hatchReverse","hatchSpacing","faceLayer","faceDirection","coreDirection"]);
-  const mark = spec => {
-    const material=kind(spec.materialKind);
-    if(!material)return "";
-    const code=material.id.startsWith("solid-") && material.id!=="solid-panel"
-      ? spec.woodSpecies || "" : material.code || material.name;
-    return [code,spec.markSize].filter(Boolean).join(" ");
+  // Show only the basic workshop materials; retain saved designations for imports.
+  const kind = (id) => savedKinds.find((k) => k.id === id) || null;
+  const kinds = Object.freeze(
+    [
+      "solid-cross",
+      "solid-long",
+      "particleboard",
+      "hardboard",
+      "laminate",
+      "glass",
+    ].map(kind),
+  );
+  const choices = (current = "") => {
+    const saved = kind(current);
+    return saved && !kinds.some((k) => k.id === current)
+      ? [...kinds, { ...saved, name: `${saved.name} (uložený materiál)` }]
+      : kinds;
   };
-  const marking = spec => Object.fromEntries(markingKeys.filter(k=>spec?.[k]!==undefined).map(k=>[k,spec[k]]));
+  const species = Object.freeze(
+    [
+      ["SM", "Smrk"],
+      ["JD", "Jedle"],
+      ["DG", "Douglaska"],
+      ["BO", "Borovice"],
+      ["VJ", "Vejmutovka"],
+      ["MD", "Modřín"],
+      ["DB", "Dub"],
+      ["CER", "Dub cer"],
+      ["BK", "Buk"],
+      ["JS", "Jasan"],
+      ["JV", "Javor"],
+      ["AK", "Akát"],
+      ["HB", "Habr"],
+      ["JL", "Jilm"],
+      ["OR", "Ořešák vlašský"],
+      ["BR", "Bříza"],
+      ["SV", "Švestka"],
+      ["TR", "Třešeň"],
+      ["LP", "Lípa"],
+      ["OL", "Olše"],
+      ["TP", "Topol"],
+      ["KS", "Jírovec"],
+      ["ABA", "Abachi"],
+      ["ANI", "Aningeri"],
+      ["AVO", "Avodire"],
+      ["BUB", "Bubinga"],
+      ["DIB", "Dibetou"],
+      ["EBE", "Eben"],
+      ["KTO", "Koto"],
+      ["LMB", "Limba"],
+      ["MAH", "Mahagon"],
+      ["MAC", "Makore"],
+      ["MAN", "Mansonia"],
+      ["OKU", "Okoume"],
+      ["OVE", "Ovengol"],
+      ["PAL", "Paldao"],
+      ["PLR", "Palisandr"],
+      ["TEK", "Teak"],
+      ["ZIN", "Zingana"],
+    ].map(([id, name]) => Object.freeze({ id, name: `${name} (${id})` })),
+  );
+  const markingKeys = Object.freeze([
+    "woodSpecies",
+    "markSize",
+    "showMaterialLabel",
+    "hatchReverse",
+    "hatchSpacing",
+    "faceLayer",
+    "faceDirection",
+    "coreDirection",
+  ]);
+  const mark = (spec) => {
+    const material = kind(spec.materialKind);
+    if (!material) return "";
+    const code =
+      material.id.startsWith("solid-") && material.id !== "solid-panel"
+        ? spec.woodSpecies || ""
+        : material.code || material.name;
+    const size = String(spec.markSize || "")
+      .trim()
+      .replace(/(\d)\.(\d)/g, "$1,$2")
+      .replace(/\s*[x×]\s*/g, " × ");
+    return [code, size].filter(Boolean).join(" ");
+  };
+  const marking = (spec) =>
+    Object.fromEntries(
+      markingKeys
+        .filter((k) => spec?.[k] !== undefined)
+        .map((k) => [k, spec[k]]),
+    );
   Joinery.Materials = {
     catalogue: Object.freeze(catalogue),
     get,
     designation,
     kinds,
+    choices,
     kind,
     species,
     markingKeys,

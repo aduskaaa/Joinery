@@ -382,8 +382,8 @@
           const px = x(p.p),
             py = y(p.p);
           const rot =
-            p.orientation === "vertical"
-              ? ` transform="rotate(-90 ${px} ${py})"`
+            p.rotation != null || p.orientation === "vertical"
+              ? ` transform="rotate(${round((-(p.rotation ?? Math.PI / 2) * 180) / Math.PI)} ${px} ${py})"`
               : "";
           pieces.push(
             `<text x="${px}" y="${py}"${rot} font-family="Arial,sans-serif" font-size="${fontSize(p)}" text-anchor="${p.anchor || "middle"}" fill="${color}">${escapeHTML(p.text)}</text>`,
@@ -570,7 +570,8 @@
         continue;
       }
       if (
-        ["panel", "rectangle", "polyline", "cutout", "slot"].includes(e.type) && !e.symbolType
+        ["panel", "rectangle", "polyline", "cutout", "slot"].includes(e.type) &&
+        !e.symbolType
       ) {
         const pts = e.bulges?.some(Boolean) ? e.points : vertices(e);
         start("LWPOLYLINE", e);
@@ -603,7 +604,9 @@
             [20, round(p.p.y)],
             [40, p.size],
             [1, ascii(p.text)],
-            ...(p.orientation === "vertical" ? [[50, 90]] : []),
+            ...(p.rotation != null || p.orientation === "vertical"
+              ? [[50, round(((p.rotation ?? Math.PI / 2) * 180) / Math.PI)]]
+              : []),
             [72, p.anchor === "start" ? 0 : p.anchor === "end" ? 2 : 1],
             [11, round(p.p.x)],
             [21, round(p.p.y)],
@@ -917,14 +920,7 @@
       y = (p) => round(p.y * ratio + oy),
       commands = ["0 J 0 j", "0 G"];
     const font = Joinery.PdfFont.context();
-    const pdfText = (
-      value,
-      px,
-      py,
-      size,
-      anchor = "start",
-      vertical = false,
-    ) => {
+    const pdfText = (value, px, py, size, anchor = "start", rotation = 0) => {
       const w = font.width(value, size),
         offset =
           anchor === "end"
@@ -932,10 +928,13 @@
             : anchor === "center" || anchor === true
               ? w / 2
               : 0;
-      if (vertical) {
-        const ty = py - offset;
+      if (rotation) {
+        const c = Math.cos(rotation),
+          s = Math.sin(rotation),
+          tx = px - c * offset,
+          ty = py - s * offset;
         commands.push(
-          `BT 0 1 -1 0 ${round(px)} ${round(ty)} Tm /F1 ${round(size)} Tf ${font.encode(value)} Tj ET`,
+          `BT ${round(c)} ${round(s)} ${round(-s)} ${round(c)} ${round(tx)} ${round(ty)} Tm /F1 ${round(size)} Tf ${font.encode(value)} Tj ET`,
         );
       } else {
         const tx = px - offset;
@@ -960,7 +959,7 @@
               ? (p.size * ratio) / font.capHeight
               : Math.max(4, p.size * ratio),
             p.anchor || "center",
-            p.orientation === "vertical",
+            p.rotation ?? (p.orientation === "vertical" ? Math.PI / 2 : 0),
           );
           continue;
         }

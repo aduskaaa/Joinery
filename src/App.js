@@ -48,7 +48,7 @@
   function materialOptions(value = "") {
     return (
       `<option value="" ${!value ? "selected" : ""}>Bez značení</option>` +
-      Joinery.Materials.kinds
+      Joinery.Materials.choices(value)
         .map(
           (p) =>
             `<option value="${p.id}" ${p.id === value ? "selected" : ""}>${esc(p.name)}</option>`,
@@ -199,9 +199,11 @@
         id: uid(),
         layer: this.activeLayer,
         lineStyle: this.project.settings.defaultLineStyle || "continuous",
-        lineWeight: ["dimension", "angle", "radius", "leader"].includes(e.type)
-          ? 0.18
-          : this.project.settings.defaultLineWeight || 0.35,
+        lineWeight:
+          e.symbolType ||
+          ["dimension", "angle", "radius", "leader"].includes(e.type)
+            ? 0.18
+            : this.project.settings.defaultLineWeight || 0.35,
         ...(["panel", "rectangle", "polyline"].includes(e.type)
           ? { materialKind: this.project.settings.defaultMaterialKind || "" }
           : {}),
@@ -810,7 +812,7 @@
             type: "select",
             options: [
               { value: "", label: "Bez značení" },
-              ...Joinery.Materials.kinds.map((k) => ({
+              ...Joinery.Materials.choices(item.materialKind).map((k) => ({
                 value: k.id,
                 label: k.name,
               })),
@@ -1149,7 +1151,13 @@
         curveTolerance: this.booleanOptions.tolerance,
       };
       if (operation === "difference") {
-        for (const key of ["cutListEnabled", "groupId", "groupName"])
+        for (const key of [
+          "cutListEnabled",
+          "groupId",
+          "groupName",
+          "materialKind",
+          ...Joinery.Materials.markingKeys,
+        ])
           if (base[key] !== undefined) region[key] = base[key];
       }
       if (operation === "difference" && isPart(base)) {

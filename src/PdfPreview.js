@@ -24,11 +24,12 @@
     for (const command of commands) {
       if (command.startsWith("BT ")) {
         const tm = command.match(
-          /0 1 -1 0 ([\d.-]+) ([\d.-]+) Tm \/F1 ([\d.]+) Tf <([0-9a-f]*)>/,
+          /BT ([\d.-]+) ([\d.-]+) ([\d.-]+) ([\d.-]+) ([\d.-]+) ([\d.-]+) Tm \/F1 ([\d.]+) Tf <([0-9a-f]*)>/,
         );
         if (tm) {
+          // PDF text matrix is in upward Y; SVG glyphs need a local Y flip.
           items.push(
-            `<text x="${tm[1]}" y="${-Number(tm[2])}" transform="scale(1,-1) rotate(-90 ${tm[1]} ${-Number(tm[2])})" font-family="Blueprint" font-size="${tm[3]}" fill="${fill}">${escape(font.decode(tm[4]))}</text>`,
+            `<text x="0" y="0" transform="matrix(${tm[1]} ${tm[2]} ${-Number(tm[3])} ${-Number(tm[4])} ${tm[5]} ${tm[6]})" font-family="Blueprint" font-size="${tm[7]}" fill="${fill}">${escape(font.decode(tm[8]))}</text>`,
           );
           continue;
         }

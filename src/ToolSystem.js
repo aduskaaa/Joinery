@@ -267,17 +267,33 @@
   class LeaderTool extends CADTool {
     constructor(a, s) {
       super(a, s);
-      this.options = { text: "Popis" };
+      this.options = {
+        text: "Popis",
+        notation: "text",
+        markKind: "particleboard",
+        woodSpecies: "",
+        markSize: "",
+        treatment: "NTP",
+        gloss: "5",
+        allFaces: false,
+        fastenerId: "screw-countersunk",
+        diameter: 3,
+        nominalLength: 25,
+        standard: "ČSN 02 1814",
+      };
     }
     fields() {
-      return [["text", "Text", "Popis", "text"]];
+      return J.Markings.fields(this.options);
+    }
+    optionsChanged(key) {
+      return J.Markings.defaults(this.options, key);
     }
     entity(p) {
       const end = { x: p.x, y: this.points[1].y };
       return {
         type: "leader",
         points: [...this.points.slice(0, 2), end],
-        text: this.options.text,
+        text: J.Markings.designation(this.options),
       };
     }
     click(p) {
@@ -286,7 +302,12 @@
     }
     pointerEnd(p) {
       if (this.pending) {
-        this.app.add([this.entity(p)]);
+        const entity = this.entity(p);
+        if (!entity.text.trim()) {
+          this.app.toast("Doplňte text nebo dřevinu pro označení.");
+          return;
+        }
+        this.app.add([entity]);
         this.pending = false;
         this.reset();
       }
@@ -298,6 +319,117 @@
           : this.points.length
             ? [{ type: "line", points: [this.points[0], p] }]
             : [];
+    }
+  }
+  // Symbols remain ordinary movable entities; their two points define origin and direction.
+  class ReferenceSymbolTool extends CADTool {
+    constructor(a, s, symbolType) {
+      super(a, s);
+      this.symbolType = symbolType;
+      this.options = {
+        grit: 120,
+        symbolAngle: 0,
+        notation: "fastener",
+        fastenerId: "screw-countersunk",
+        diameter: 3,
+        nominalLength: 25,
+        standard: "ČSN 02 1814",
+        fastenerView: "side",
+        showFastenerLabel: false,
+      };
+    }
+    fields() {
+      if (this.symbolType === "roughness")
+        return [
+          [
+            "grit",
+            "Zrnitost",
+            120,
+            "select",
+            J.Markings.grits.map((n) => [String(n), String(n)]),
+          ],
+          ["symbolAngle", "Úhel značky [°]", 0],
+        ];
+      return [
+        ...J.Markings.fields(this.options).slice(1),
+        [
+          "fastenerView",
+          "Zobrazení",
+          "side",
+          "select",
+          [
+            ["side", "Boční značka"],
+            ["end", "Čelní značka"],
+            ["axis", "Pouze osa"],
+          ],
+        ],
+        ["showFastenerLabel", "Písemné označení", false, "checkbox"],
+      ];
+    }
+    optionsChanged(key) {
+      return J.Markings.defaults(this.options, key);
+    }
+    entity(p) {
+      const a = this.first || p,
+        o = this.options,
+        theta =
+          this.symbolType === "roughness"
+            ? (Number(o.symbolAngle) * Math.PI) / 180
+            : this.first
+              ? G.angle(a, p)
+              : 0,
+        length =
+          this.symbolType === "fastener" && o.fastenerView !== "end"
+            ? o.nominalLength
+            : 1;
+      return {
+        type: "polyline",
+        closed: false,
+        cutListEnabled: false,
+        symbolType: this.symbolType,
+        points: [
+          a,
+          G.add(a, {
+            x: Math.cos(theta) * length,
+            y: Math.sin(theta) * length,
+          }),
+        ],
+        ...(this.symbolType === "roughness"
+          ? { grit: Number(o.grit) }
+          : {
+              fastenerId: o.fastenerId,
+              fastenerView: o.fastenerView,
+              diameter: o.diameter,
+              nominalLength: o.nominalLength,
+              standard: o.standard,
+              showFastenerLabel: o.showFastenerLabel,
+            }),
+      };
+    }
+    click(p) {
+      if (
+        this.symbolType === "fastener" &&
+        this.options.fastenerView !== "end" &&
+        !this.first
+      ) {
+        this.first = p;
+        this.points = [p];
+        return;
+      }
+      const entity = this.entity(p);
+      J.Markings.validate(entity);
+      this.app.add([entity]);
+      this.reset();
+    }
+    move(p) {
+      this.app.canvas.preview = [this.entity(p)];
+    }
+    hint() {
+      return this.symbolType === "roughness"
+        ? "Klikněte na opracovanou plochu · Číslo značí zrnitost brusiva"
+        : this.options.fastenerView === "end"
+          ? "Klikněte na střed spojovacího prostředku"
+          : "Začátek → směr · Délku určuje pole Délka";
     }
   }
   class GrainTool extends CADTool {
@@ -522,6 +654,8 @@
         "handle-arc": new HandleArcTool(app, this),
         arc: new HandleArcTool(app, this),
         leader: new LeaderTool(app, this),
+        surface: new ReferenceSymbolTool(app, this, "roughness"),
+        fastener: new ReferenceSymbolTool(app, this, "fastener"),
         grain: new GrainTool(app, this),
         gaps: new GapCheckerTool(app, this),
         detail: new DetailTool(app, this),
@@ -699,11 +833,11 @@
         button.dataset.pickIndex = i;
         const name = document.createElement("span"),
           detail = document.createElement("small");
-        name.textContent = `${i + 1}. ${entity.name || entity.text || types[entity.type] || "Objekt"}`;
+        name.textContent = `${i + 1}. ${entity.name || J.Markings.entityName(entity) || entity.text || types[entity.type] || "Objekt"}`;
         const layer = this.app.project.layers.find(
           (l) => l.id === entity.layer,
         );
-        detail.textContent = `${types[entity.type] || entity.type} · ${layer?.name || "Vrstva"}${entity.lineStyle === "dashed" ? " · čárkovaná" : ""}${entity.id ? " · " + entity.id.slice(-8) : ""}`;
+        detail.textContent = `${J.Markings.entityName(entity) || types[entity.type] || entity.type} · ${layer?.name || "Vrstva"}${entity.lineStyle === "dashed" ? " · čárkovaná" : ""}${entity.id ? " · " + entity.id.slice(-8) : ""}`;
         button.append(name, detail);
         const highlight = () => {
           canvas.pickHover = entity;
@@ -807,6 +941,7 @@
             this.app.chooseTool(input.value);
             return;
           }
+          const rebuild = tool.optionsChanged?.(name);
           if (tool instanceof GapCheckerTool) tool.scan();
           else
             this.dispatch(
@@ -814,6 +949,7 @@
               this.app.tools.pointer,
               this.app.tools.lastEvent || {},
             );
+          if (rebuild) this.renderHUD();
         };
         l.append(input);
         bar.append(l);
@@ -1175,7 +1311,16 @@
       ["Rohy a hrany", ["offset", "fillet", "chamfer", "join", "explode"]],
       [
         "Kóty a popisy",
-        ["dimension", "angle", "radius", "leader", "detail", "text"],
+        [
+          "dimension",
+          "angle",
+          "radius",
+          "leader",
+          "surface",
+          "fastener",
+          "detail",
+          "text",
+        ],
       ],
       [
         "Booleovské",
@@ -1207,6 +1352,8 @@
       break: "Přerušit úsečku",
       "handle-arc": "Oblouk",
       leader: "Odkazová kóta",
+      surface: "Opracování povrchu",
+      fastener: "Spojovací prostředek",
       grain: "Směr vláken",
       gaps: "Kontrola mezer",
       detail: "Detail",
@@ -1255,6 +1402,7 @@
     GapCheckerTool,
     DetailTool,
     LeaderTool,
+    ReferenceSymbolTool,
     GrainTool,
     HandleArcTool,
     TransformTool: J.Tools.TransformTool,

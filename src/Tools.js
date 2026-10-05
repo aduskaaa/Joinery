@@ -376,7 +376,9 @@
           "circle",
           "drill",
           "cutout",
-        ].includes(e.type) && !e.bulges?.some(Boolean)
+        ].includes(e.type) &&
+        !e.symbolType &&
+        !e.bulges?.some(Boolean)
       );
     }
     move(p, e, raw = p) {
@@ -541,7 +543,9 @@
             (t) =>
               ["line", "polyline", "rectangle", "panel", "cutout"].includes(
                 t.type,
-              ) && !t.bulges?.some(Boolean),
+              ) &&
+              !t.symbolType &&
+              !t.bulges?.some(Boolean),
           )
           .map((entity) => ({
             ...entity,

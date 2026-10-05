@@ -1,7 +1,10 @@
 (function (J) {
   const G = J.Geometry,
     esc = (s) => J.Woodworking.escapeHTML(s),
-    kinds = () => [{ id: "", name: "Neurčeno" }, ...J.Materials.kinds];
+    kinds = (current) => [
+      { id: "", name: "Neurčeno" },
+      ...J.Materials.choices(current),
+    ];
   class PropertyPanel {
     constructor(app) {
       this.app = app;
@@ -18,6 +21,8 @@
         : "Bez výběru";
       const input = (key, label, value, type = "number", extra = "") =>
         `<label>${label}<input data-property="${key}" type="${type}" value="${esc(value ?? "")}" ${type === "number" ? 'step="any"' : ""} ${extra}></label>`;
+      const check = (key, label, value) =>
+        `<label class="checkbox-label"><input data-property="${key}" type="checkbox" ${value ? "checked" : ""}>${label}</label>`;
       const select = (key, label, value, options) =>
         `<label>${label}<select data-property="${key}">${options.map((o) => `<option value="${esc(o.id)}" ${o.id === value ? "selected" : ""}>${esc(o.name)}</option>`).join("")}</select></label>`;
       const category = (label, body) =>
@@ -71,7 +76,7 @@
                 "defaultMaterialKind",
                 "Materiál",
                 s.defaultMaterialKind || "",
-                kinds(),
+                kinds(s.defaultMaterialKind),
               ),
           );
       } else {
@@ -79,7 +84,7 @@
           list.every((x) => (x.part || x)[key] === (spec || {})[key])
             ? spec[key]
             : "";
-        html = `<p class="inspector-count">${list.length === 1 ? esc(e.name || PropertyPanel.names[e.type] || e.type) : `${list.length} vybraných objektů`}</p>`;
+        html = `<p class="inspector-count">${list.length === 1 ? esc(e.name || J.Markings.entityName(e) || PropertyPanel.names[e.type] || e.type) : `${list.length} vybraných objektů`}</p>`;
         html += category(
           "Obecné",
           select(
@@ -150,7 +155,10 @@
                 e.center.y,
               ) +
               input("radius", "Poloměr [mm]", e.radius);
-          if (["panel", "rectangle", "region", "polyline"].includes(e.type)) {
+          if (
+            !e.symbolType &&
+            ["panel", "rectangle", "region", "polyline"].includes(e.type)
+          ) {
             const size = J.Model.panelSize(e);
             geo +=
               input("width", "Šířka polotovaru [mm]", size.width) +
@@ -169,16 +177,58 @@
             );
           if (["text", "leader"].includes(e.type))
             geo += input("text", "Text", e.text, "text");
+          if (e.symbolType === "roughness")
+            geo +=
+              select(
+                "grit",
+                "Zrnitost brusiva",
+                String(e.grit),
+                J.Markings.grits.map((n) => ({
+                  id: String(n),
+                  name: String(n),
+                })),
+              ) +
+              input(
+                "angle",
+                "Úhel značky [°]",
+                (G.angle(...e.points) * 180) / Math.PI,
+              );
+          if (e.symbolType === "fastener")
+            geo +=
+              select(
+                "fastenerId",
+                "Spojovací prostředek",
+                e.fastenerId,
+                J.Markings.fasteners,
+              ) +
+              select("fastenerView", "Zobrazení", e.fastenerView, [
+                { id: "side", name: "Boční značka" },
+                { id: "end", name: "Čelní značka" },
+                { id: "axis", name: "Pouze osa" },
+              ]) +
+              input("diameter", "Průměr ve značce [mm]", e.diameter) +
+              input("nominalLength", "Délka [mm]", e.nominalLength) +
+              input("standard", "Předpis / katalog", e.standard, "text") +
+              check(
+                "showFastenerLabel",
+                "Písemné označení",
+                e.showFastenerLabel,
+              );
           if (geo) html += category("Geometrie", geo);
         }
-        const manufacturable = list.every((x) =>
-          ["panel", "rectangle", "polyline", "region"].includes(x.type),
+        const manufacturable = list.every(
+          (x) =>
+            !x.symbolType &&
+            ["panel", "rectangle", "polyline", "region", "circle"].includes(
+              x.type,
+            ) &&
+            (x.type !== "polyline" || x.closed),
         );
         let wood = select(
           "materialKind",
           "Značení materiálu",
           shared("materialKind") || "",
-          kinds(),
+          kinds(shared("materialKind")),
         );
         if (manufacturable) {
           wood +=
@@ -205,8 +255,77 @@
                 ),
               )
               .join("");
+          const kind = shared("materialKind"),
+            material = J.Materials.kind(kind),
+            solid = ["solid-cross", "solid-long"].includes(kind),
+            board = ["board", "laminate"].includes(material?.pattern);
+          if (material) {
+            if (solid)
+              wood += select(
+                "woodSpecies",
+                "Dřevina",
+                shared("woodSpecies") || "",
+                [{ id: "", name: "Neurčeno" }, ...J.Materials.species],
+              );
+            wood +=
+              input(
+                "markSize",
+                "Rozměr ve značce",
+                shared("markSize") || "",
+                "text",
+              ) +
+              check(
+                "showMaterialLabel",
+                "Písemná značka uvnitř řezu",
+                shared("showMaterialLabel"),
+              ) +
+              input(
+                "hatchSpacing",
+                "Rozteč šraf na papíře [mm]",
+                shared("hatchSpacing") || 3,
+                "number",
+                'min="0.5" max="20"',
+              ) +
+              check(
+                "hatchReverse",
+                "Opačný sklon šraf",
+                shared("hatchReverse"),
+              );
+            if (board) {
+              const face =
+                shared("faceLayer") ?? (kind === "laminate" ? "foil" : "");
+              wood += select("faceLayer", "Krycí vrstvy", face, [
+                { id: "", name: "Bez krycí vrstvy" },
+                { id: "veneer", name: "Dýha – tenká čára uvnitř" },
+                { id: "foil", name: "Fólie – velmi tlustá čára" },
+              ]);
+              if (face === "veneer")
+                wood += select(
+                  "faceDirection",
+                  "Vlákna dýhy",
+                  shared("faceDirection") || "",
+                  [
+                    { id: "", name: "Neoznačeno" },
+                    { id: "cross", name: "Kolmo k rovině řezu (×)" },
+                    { id: "long", name: "V rovině řezu (šipka)" },
+                  ],
+                );
+              if (kind.startsWith("blockboard"))
+                wood += select(
+                  "coreDirection",
+                  "Vlákna středu",
+                  shared("coreDirection") || "",
+                  [
+                    { id: "", name: "Neoznačeno" },
+                    { id: "cross", name: "Kolmo k rovině řezu (×)" },
+                    { id: "long", name: "V rovině řezu (šipka)" },
+                  ],
+                );
+            }
+            wood += `<p class="select-hint">Rozměr je pouze údaj ve značce. Pro úzký řez použijte odkazovou kótu.</p>`;
+          }
         }
-        html += category("Materiál a hrany", wood);
+        if (manufacturable) html += category("Značení materiálu", wood);
         if (list.length > 1)
           html +=
             '<div class="inspector-actions"><button data-inspector="group">Seskupit</button><button data-inspector="ungroup">Rozdělit skupinu</button></div>';
@@ -254,7 +373,7 @@
         a.scheduleSave();
         return;
       }
-      if (key === "dimensionTextHeight") value = Number(value);
+      if (["dimensionTextHeight", "grit"].includes(key)) value = Number(value);
       if (defaultKeys.includes(key)) {
         if (
           ["drawingScale", "gridSize", "defaultLineWeight"].includes(key) &&
@@ -344,6 +463,19 @@
                   );
                 }),
               );
+            } else if (
+              e.symbolType === "fastener" &&
+              ["fastenerId", "fastenerView", "nominalLength"].includes(key)
+            ) {
+              e[key] = value;
+              if (key === "fastenerId") J.Markings.defaults(e, key);
+              const dir = G.unit(G.sub(e.points[1], e.points[0]));
+              e.points[1] = G.add(
+                e.points[0],
+                G.mul(dir, e.fastenerView === "end" ? 1 : e.nominalLength),
+              );
+            } else if (J.Materials.markingKeys.includes(key)) {
+              spec[key] = value;
             } else if (key.startsWith("edge")) {
               const i = Number(key.slice(4));
               spec.banding ||= [0, 0, 0, 0];

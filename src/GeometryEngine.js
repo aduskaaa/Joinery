@@ -677,6 +677,7 @@
           }
       };
       for (const e of entities) {
+        if (e.symbolType) continue;
         if (
           e.type === "detail" ||
           ![

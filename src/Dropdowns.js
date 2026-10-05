@@ -257,7 +257,11 @@
     document.addEventListener(
       "scroll",
       (e) => {
-        if (active && !active.menu.contains(e.target)) close();
+        if (!active || active.menu.contains(e.target)) return;
+        // Focusing an off-screen footer field scrolls its parent. Keep the
+        // popup attached to the trigger rather than closing it mid-click.
+        if (e.target.contains?.(active.wrapper)) position(active);
+        else close();
       },
       true,
     );

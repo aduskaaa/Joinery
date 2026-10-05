@@ -44,11 +44,24 @@
   ) {
     const size = textHeight * paperScale;
     const annotation = (p, value) => text(p, value, size, { annotation: true });
-    if (e.symbolType) return Joinery.Markings.primitives(e, {paperScale,textHeight});
-    const materialLabel = Joinery.Markings?.materialLabel(e,paperScale,textHeight);
+    if (e.symbolType)
+      return Joinery.Markings.primitives(e, { paperScale, textHeight });
+    const materialLabel = Joinery.Markings?.materialLabel(
+      e,
+      paperScale,
+      textHeight,
+    );
     if (materialLabel) {
-      const box = textBox(materialLabel,paperScale);
-      textHoles = [...textHoles,[{x:box.minX,y:box.minY},{x:box.maxX,y:box.minY},{x:box.maxX,y:box.maxY},{x:box.minX,y:box.maxY}]];
+      const box = textBox(materialLabel, paperScale);
+      textHoles = [
+        ...textHoles,
+        [
+          { x: box.minX, y: box.minY },
+          { x: box.maxX, y: box.minY },
+          { x: box.maxX, y: box.maxY },
+          { x: box.minX, y: box.maxY },
+        ],
+      ];
     }
     // Keep islands and holes together as unfilled manufacturing contours.
     if (e.type === "region")
@@ -74,6 +87,10 @@
           ),
         );
       }
+      list.push(
+        ...(Joinery.Hatching?.primitives(e, paperScale, textHoles) || []),
+        ...(materialLabel ? [materialLabel] : []),
+      );
       return list;
     }
     if (e.type === "arc") return [{ kind: "arc", ...e }];
@@ -283,8 +300,26 @@
       result = Joinery.GeometryEngine.GeometryEngine.explode(e).flatMap(
         (child) => rawPrimitives(child, units, options),
       );
+      const label = Joinery.Markings?.materialLabel(
+          e,
+          scale,
+          options.textHeight || 2.5,
+        ),
+        box = label && textBox(label, scale),
+        holes = box
+          ? [
+              ...(options.textHoles || []),
+              [
+                { x: box.minX, y: box.minY },
+                { x: box.maxX, y: box.minY },
+                { x: box.maxX, y: box.maxY },
+                { x: box.minX, y: box.maxY },
+              ],
+            ]
+          : options.textHoles;
       result.push(
-        ...(Joinery.Hatching?.primitives(e, scale, options.textHoles) || []),
+        ...(Joinery.Hatching?.primitives(e, scale, holes) || []),
+        ...(label ? [label] : []),
       );
     } else result = rawPrimitives(e, units, options);
     if (spec.banding && e.type !== "panel" && e.type !== "region") {
@@ -317,8 +352,8 @@
     return result.map((p) => ({
       ...p,
       stroke: e.stroke,
-      lineWeight: p.hatch ? 0.13 : p.lineWeight ?? e.lineWeight,
-      ...(p.hatch ? { opacity: 0.28 } : {}),
+      lineWeight: p.hatch ? 0.13 : (p.lineWeight ?? e.lineWeight),
+      ...(p.hatch ? { opacity: 1 } : {}),
       lineStyle:
         p.lineStyle || e.lineStyle || (p.dash ? "dashed" : "continuous"),
     }));
@@ -347,6 +382,27 @@
   }
   function textBox(p, padding = 0) {
     const width = textWidth(p);
+    if (p.rotation != null) {
+      const offset =
+          p.anchor === "start" ? 0 : p.anchor === "end" ? width : width / 2,
+        c = Math.cos(p.rotation),
+        s = Math.sin(p.rotation),
+        corners = [
+          [-offset, -p.size * 0.22],
+          [width - offset, -p.size * 0.22],
+          [width - offset, p.size],
+          [-offset, p.size],
+        ].map(([x, y]) => ({
+          x: p.p.x + x * c - y * s,
+          y: p.p.y + x * s + y * c,
+        }));
+      return {
+        minX: Math.min(...corners.map((q) => q.x)) - padding,
+        maxX: Math.max(...corners.map((q) => q.x)) + padding,
+        minY: Math.min(...corners.map((q) => q.y)) - padding,
+        maxY: Math.max(...corners.map((q) => q.y)) + padding,
+      };
+    }
     if (p.orientation === "vertical") {
       const offset =
         p.anchor === "start" ? 0 : p.anchor === "end" ? width : width / 2;
@@ -548,6 +604,20 @@
           ];
         }),
     );
+    for (const e of entities.filter((e) => e.symbolType)) {
+      for (const label of Joinery.Markings.primitives(e, {
+        paperScale,
+        textHeight: options.textHeight || 2.5,
+      }).filter((p) => p.kind === "text")) {
+        const box = textBox(label, paperScale * 0.6);
+        textHoles.push([
+          { x: box.minX, y: box.minY },
+          { x: box.maxX, y: box.minY },
+          { x: box.maxX, y: box.maxY },
+          { x: box.minX, y: box.maxY },
+        ]);
+      }
+    }
     const sceneOptions = { ...options, textHoles };
     const records = entities.map((entity, index) => ({
       entity,

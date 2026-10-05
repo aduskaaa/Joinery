@@ -342,7 +342,8 @@
       for (const e of entities) {
         let h = hitDistance(e, p);
         if (
-          (["dimension", "leader", "radius"].includes(e.type) || e.symbolType) &&
+          (["dimension", "leader", "radius"].includes(e.type) ||
+            e.symbolType) &&
           this.renderedScene?.has(e.id)
         ) {
           h = Infinity;
@@ -768,9 +769,9 @@
         const width = ctx.measureText(p.text).width,
           padX = 4,
           padY = 2;
-        if (p.orientation === "vertical") {
+        if (p.rotation != null || p.orientation === "vertical") {
           ctx.translate(s.x, s.y);
-          ctx.rotate(-Math.PI / 2);
+          ctx.rotate(-(p.rotation ?? Math.PI / 2));
           ctx.fillStyle = c.canvas;
           if (p.anchor === "start") {
             ctx.fillRect(

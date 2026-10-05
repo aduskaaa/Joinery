@@ -268,16 +268,19 @@
                 size = p.annotation
                   ? p.size / view.scale
                   : (p.size / view.scale) * font.capHeight;
-              if (p.orientation === "vertical") {
-                const fs = (size * mm) / font.capHeight,
-                  py =
-                    (height - q.y) * mm -
-                    (p.anchor === "start"
+              if (p.rotation != null || p.orientation === "vertical") {
+                const rotation = p.rotation ?? Math.PI / 2,
+                  c = Math.cos(rotation),
+                  sn = Math.sin(rotation),
+                  fs = (size * mm) / font.capHeight,
+                  offset =
+                    p.anchor === "start"
                       ? 0
-                      : font.width(p.text, fs) *
-                        (p.anchor === "end" ? 1 : 0.5));
+                      : font.width(p.text, fs) * (p.anchor === "end" ? 1 : 0.5),
+                  px = q.x * mm - c * offset,
+                  py = (height - q.y) * mm - sn * offset;
                 commands.push(
-                  `BT 0 1 -1 0 ${x(q.x)} ${F(py)} Tm /F1 ${F(fs)} Tf ${font.encode(p.text)} Tj ET`,
+                  `BT ${F(c)} ${F(sn)} ${F(-sn)} ${F(c)} ${F(px)} ${F(py)} Tm /F1 ${F(fs)} Tf ${font.encode(p.text)} Tj ET`,
                 );
               } else label(p.text, q.x, q.y, size, p.anchor || "center");
               continue;
@@ -620,20 +623,20 @@
           let m = command.match(
               /\/F1 ([\d.]+) Tf ([\d.-]+) ([\d.-]+) Td <([0-9a-f]*)>/,
             ),
-            vertical = false;
+            rotation = 0;
           if (!m) {
             const v = command.match(
-              /BT 0 1 -1 0 ([\d.-]+) ([\d.-]+) Tm \/F1 ([\d.]+) Tf <([0-9a-f]*)>/,
+              /BT ([\d.-]+) ([\d.-]+) ([\d.-]+) ([\d.-]+) ([\d.-]+) ([\d.-]+) Tm \/F1 ([\d.]+) Tf <([0-9a-f]*)>/,
             );
             if (v) {
-              m = [null, v[3], v[1], v[2], v[4]];
-              vertical = true;
+              m = [null, v[7], v[5], v[6], v[8]];
+              rotation = Math.atan2(+v[2], +v[1]);
             }
           }
           if (m) {
             ctx.save();
             ctx.translate(+m[2], +m[3]);
-            if (vertical) ctx.rotate(Math.PI / 2);
+            if (rotation) ctx.rotate(rotation);
             ctx.scale(1, -1);
             ctx.font = `${m[1]}px Blueprint, Arial`;
             ctx.fillText(font.decode(m[4]), 0, 0);

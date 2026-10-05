@@ -13,6 +13,7 @@
     validateProject,
     panelSize,
     isPart,
+    isInCutlist,
     partSpec,
     History,
   } = Joinery.Model;
@@ -119,9 +120,7 @@
       window.joinery = this;
     }
     panels() {
-      return this.project.entities.filter(
-        (e) => isPart(e) && e.cutListEnabled !== false,
-      );
+      return this.project.entities.filter((e) => isInCutlist(e));
     }
     editableSelection() {
       // Never transform only the unlocked/visible fragment of a group.
@@ -335,6 +334,8 @@
       $("cutlist-csv").onclick = () => this.exportFile("csv");
       if ($("add-cutlist-item"))
         $("add-cutlist-item").onclick = () => this.addCustomCutlistItem();
+      if ($("add-drawing-to-cutlist"))
+        $("add-drawing-to-cutlist").onclick = () => this.addDrawingToCutlistDialog();
       $("project-title").ondblclick = (e) => {
         e.preventDefault();
         this.editProjectName();
@@ -674,22 +675,113 @@
                 <td>${esc(r.edgeBanding)}</td>
                 <td>${r.pieceNet} m² <small>(${r.pieceShare} %)</small></td>
                 <td><strong>${r.rowNet} m²</strong></td>
-                <td>${
-                  r.custom
-                    ? `<button type="button" class="table-action-btn edit-custom" data-id="${esc(r.id)}" title="Upravit">✎</button>
-                       <button type="button" class="table-action-btn delete-custom" data-id="${esc(r.id)}" title="Smazat">🗑</button>`
-                    : '<span class="muted">Z výkresu</span>'
-                }</td>
+                <td>
+                  <div class="row-actions">
+                    ${
+                      r.custom
+                        ? `<button type="button" class="table-action-btn edit-custom" data-id="${esc(r.id)}" title="Upravit">✎</button>`
+                        : `<button type="button" class="table-action-btn show-in-drawing" data-id="${esc(r.id)}" title="Zobrazit ve výkresu">👁</button>`
+                    }
+                    <button type="button" class="table-action-btn delete-cutlist-item" data-id="${esc(r.id)}" data-custom="${r.custom ? "true" : "false"}" title="Odebrat z kusovníku">🗑</button>
+                  </div>
+                </td>
               </tr>`,
           )
           .join("") ||
-        '<tr><td colspan="11" class="muted">Kusovník je prázdný. Přidejte dílce do projektu nebo klikněte na „Přidat položku“.</td></tr>';
+        '<tr><td colspan="11" class="muted">Kusovník je prázdný. Klikněte na „+ Ruční položka“ nebo „+ Přidat z výkresu“.</td></tr>';
 
       document.querySelectorAll(".edit-custom").forEach((btn) => {
         btn.onclick = () => this.editCustomCutlistItem(btn.dataset.id);
       });
-      document.querySelectorAll(".delete-custom").forEach((btn) => {
-        btn.onclick = () => this.deleteCustomCutlistItem(btn.dataset.id);
+      document.querySelectorAll(".show-in-drawing").forEach((btn) => {
+        btn.onclick = () => {
+          this.setTab("design");
+          this.select(btn.dataset.id);
+          this.canvas?.invalidate();
+        };
+      });
+      document.querySelectorAll(".delete-cutlist-item").forEach((btn) => {
+        btn.onclick = () => {
+          this.removeCutlistItem(btn.dataset.id, btn.dataset.custom === "true");
+        };
+      });
+    }
+    removeCutlistItem(id, isCustom) {
+      this.commit(() => {
+        if (isCustom) {
+          this.project.customCutlist = (this.project.customCutlist || []).filter(
+            (c) => c.id !== id,
+          );
+        } else {
+          const e = this.project.entities.find((q) => q.id === id);
+          if (e) {
+            e.cutListEnabled = false;
+          }
+        }
+      });
+      this.toast("Položka byla odebrána z kusovníku.");
+      this.renderCutlist();
+      this.renderParts();
+      this.renderProperties();
+    }
+    addDrawingToCutlistDialog() {
+      const eligible = (this.project.entities || []).filter(
+        (e) =>
+          ["panel", "rectangle", "polyline", "region"].includes(e.type) &&
+          (e.closed || e.type === "panel" || e.type === "rectangle" || e.type === "region") &&
+          !isInCutlist(e),
+      );
+      if (!eligible.length) {
+        this.dialog(
+          "Přidat z výkresu do kusovníku",
+          '<p class="dialog-note">Ve výkresu nejsou žádné další nezařazené objekty. Všechny vhodné plochy již v kusovníku jsou, nebo můžete přidat ruční položku tlačítkem „+ Ruční položka“.</p>',
+          () => {},
+          '<button type="button" class="primary-button" onclick="document.getElementById(\'app-dialog\').close()">Rozumím</button>',
+        );
+        return;
+      }
+      const html = `
+        <p class="dialog-note">Vyberte objekt z výkresu pro zařazení do kusovníku výrobních dílců:</p>
+        <div class="drawing-candidates-list">
+          ${eligible
+            .map((e) => {
+              const s = panelSize(e);
+              const layer = this.project.layers.find((l) => l.id === e.layer)?.name || "Vrstva";
+              return `
+                <div class="candidate-row">
+                  <div class="candidate-info">
+                    <strong>${esc(e.name || (e.type === "panel" ? "Dílec" : "Objekt"))}</strong>
+                    <small>${measure(s.width)} × ${measure(s.height)} mm · ${esc(layer)}</small>
+                  </div>
+                  <button type="button" class="primary-button small candidate-add-btn" data-id="${esc(e.id)}">+ Přidat</button>
+                </div>
+              `;
+            })
+            .join("")}
+        </div>
+      `;
+      this.dialog("Přidat z výkresu do kusovníku", html, () => {
+        document.querySelectorAll(".candidate-add-btn").forEach((btn) => {
+          btn.onclick = () => {
+            const id = btn.dataset.id;
+            const entity = this.project.entities.find((q) => q.id === id);
+            if (entity) {
+              this.commit(() => {
+                entity.cutListEnabled = true;
+                if (!entity.thickness && !entity.part?.thickness) entity.thickness = 18;
+                if (!entity.quantity && !entity.part?.quantity) entity.quantity = 1;
+                if (!entity.material && !entity.part?.material) entity.material = "Lamino";
+                if (!entity.banding && !entity.part?.banding) entity.banding = [0, 0, 0, 0];
+                if (!entity.name) entity.name = "Dílec";
+              });
+              this.toast(`Dílec „${entity.name}“ byl zařazen do kusovníku.`);
+              $("app-dialog").close();
+              this.renderCutlist();
+              this.renderParts();
+              this.renderProperties();
+            }
+          };
+        });
       });
     }
     addCustomCutlistItem() {
@@ -796,7 +888,12 @@
       }
       if (entities.length > 1) {
         $("object-properties").innerHTML =
-          `<p class="muted">${entities.length} vybraných objektů. Lze přesunout, kopírovat, otočit, zrcadlit nebo vytvořit pole.</p><div class="inspector-actions"><button id="group-selected">Seskupit</button><button id="ungroup-selected">Rozdělit skupinu</button><button id="multi-edit">${icon("edit")}Upravit</button><button id="delete-selected">${icon("trash")}Smazat</button></div>`;
+          `<p class="muted">${entities.length} vybraných objektů. Lze přesunout, kopírovat, otočit, zrcadlit nebo vytvořit pole.</p>
+          <div class="multi-cutlist-actions">
+            <button type="button" id="multi-add-cutlist" class="secondary-button small">+ Přidat vybrané do kusovníku</button>
+            <button type="button" id="multi-remove-cutlist" class="secondary-button small">✕ Odebrat vybrané z kusovníku</button>
+          </div>
+          <div class="inspector-actions"><button id="group-selected">Seskupit</button><button id="ungroup-selected">Rozdělit skupinu</button><button id="multi-edit">${icon("edit")}Upravit</button><button id="delete-selected">${icon("trash")}Smazat</button></div>`;
         const groupIds = new Set(entities.map((e) => e.groupId));
         const grouped = groupIds.size === 1 && !!entities[0].groupId;
         if (grouped)
@@ -804,6 +901,32 @@
             "afterbegin",
             `<p><strong>Skupina: ${esc(entities[0].groupName || "Skupina objektů")}</strong></p>`,
           );
+        $("multi-add-cutlist").onclick = () => {
+          this.commit(() => {
+            for (const e of entities) {
+              if (["panel", "rectangle", "polyline", "region"].includes(e.type)) {
+                e.cutListEnabled = true;
+                if (!e.thickness && !e.part?.thickness) e.thickness = 18;
+                if (!e.quantity && !e.part?.quantity) e.quantity = 1;
+                if (!e.material && !e.part?.material) e.material = "Lamino";
+                if (!e.banding && !e.part?.banding) e.banding = [0, 0, 0, 0];
+              }
+            }
+          });
+          this.toast("Vybrané objekty byly zařazeny do kusovníku.");
+          this.renderParts();
+          this.renderCutlist();
+        };
+        $("multi-remove-cutlist").onclick = () => {
+          this.commit(() => {
+            for (const e of entities) {
+              e.cutListEnabled = false;
+            }
+          });
+          this.toast("Vybrané objekty byly odebrány z kusovníku.");
+          this.renderParts();
+          this.renderCutlist();
+        };
         $("group-selected").onclick = () => this.groupSelection();
         $("ungroup-selected").disabled = !entities.some((e) => e.groupId);
         $("ungroup-selected").onclick = () => this.ungroupSelection();
@@ -828,7 +951,11 @@
       const e = entities[0],
         locked = this.project.layers.find((l) => l.id === e.layer)?.locked,
         type = e.type,
-        part = isPart(e),
+        canBeCutlist =
+          ["panel", "rectangle", "polyline", "region"].includes(type) &&
+          (e.closed || type === "panel" || type === "rectangle" || type === "region"),
+        inCutlist = canBeCutlist && isInCutlist(e),
+        part = inCutlist || isPart(e),
         spec = part ? partSpec(e) : null,
         anchor =
           e.center ||
@@ -837,11 +964,24 @@
           e.polygons?.[0]?.[0]?.[0],
         label = (name, value, field, kind = "number", suffix = "") =>
           `<label>${name}${suffix}<input data-prop="${field}" type="${kind}" value="${esc(value)}" ${kind === "number" ? 'step="0.01"' : ""} ${locked ? "disabled" : ""}></label>`;
-      let html = `<div class="part-type">${icon(["panel", "rectangle", "circle", "arc", "drill", "slot", "line", "dimension", "angle", "text"].includes(type) ? type : "polyline")}<div><strong>${esc(e.name || { region: "Plocha", cutout: "Výřez", radius: "Poloměrová kóta" }[type] || [...DRAW_TOOLS].find((t) => t[0] === type)?.[1] || "Objekt")}</strong><span>${locked ? "ZAMČENÁ VRSTVA · " : ""}${part ? "VÝROBNÍ DÍLEC" : "VÝKRESOVÝ OBJEKT"} · mm</span></div></div><div class="property-form">`;
+      let html = `<div class="part-type">${icon(["panel", "rectangle", "circle", "arc", "drill", "slot", "line", "dimension", "angle", "text"].includes(type) ? type : "polyline")}<div><strong>${esc(e.name || { region: "Plocha", cutout: "Výřez", radius: "Poloměrová kóta" }[type] || [...DRAW_TOOLS].find((t) => t[0] === type)?.[1] || "Objekt")}</strong><span>${locked ? "ZAMČENÁ VRSTVA · " : ""}${inCutlist ? "VÝROBNÍ DÍLEC V KUSOVNÍKU" : "VÝKRESOVÝ OBJEKT"} · mm</span></div></div><div class="property-form">`;
+      if (canBeCutlist) {
+        html += `
+          <div class="cutlist-toggle-card">
+            <div class="cutlist-badge ${inCutlist ? "badge-in" : "badge-out"}">
+              <span class="status-dot"></span>
+              <span>${inCutlist ? "Zařazeno v kusovníku" : "Není v kusovníku"}</span>
+            </div>
+            <button type="button" id="toggle-cutlist-action" class="${inCutlist ? "table-action-btn danger" : "primary-button small"}" ${locked ? "disabled" : ""}>
+              ${inCutlist ? "✕ Odebrat z kusovníku" : "+ Přidat do kusovníku"}
+            </button>
+          </div>
+        `;
+      }
       html += label("Název", e.name || "", "name", "text");
       if (part) {
         const s = panelSize(e);
-        html += `<div class="form-grid">${label(type === "region" ? "Šířka polotovaru" : "Šířka", measure(s.width), "width")}${label(type === "region" ? "Výška polotovaru" : "Výška", measure(s.height), "height")}</div><div class="form-grid">${label("Tloušťka", spec.thickness, "thickness")}${label("Počet", spec.quantity, "quantity")}</div>${label("Popis materiálu / dřevina / dekor", spec.material, "material", "text")}<label>Druh materiálu / značení řezu<select data-prop="materialKind" ${locked ? "disabled" : ""}>${materialOptions(spec.materialKind)}</select></label>${spec.materialKind ? `<p class="material-class-note muted">${esc(Joinery.Materials.kind(spec.materialKind).note)}</p>` : ""}`;
+        html += `<div class="form-grid">${label(type === "region" ? "Šířka polotovaru" : "Šířka", measure(s.width), "width")}${label(type === "region" ? "Výška polotovaru" : "Výška", measure(s.height), "height")}</div><div class="form-grid">${label("Tloušťka", spec?.thickness ?? e.thickness ?? 18, "thickness")}${label("Počet", spec?.quantity ?? e.quantity ?? 1, "quantity")}</div>${label("Popis materiálu / dřevina / dekor", spec?.material || e.material || "", "material", "text")}<label>Druh materiálu / značení řezu<select data-prop="materialKind" ${locked ? "disabled" : ""}>${materialOptions(spec?.materialKind || e.materialKind)}</select></label>${(spec?.materialKind || e.materialKind) ? `<p class="material-class-note muted">${esc(Joinery.Materials.kind(spec?.materialKind || e.materialKind).note)}</p>` : ""}`;
       } else if (type === "rectangle" || (type === "polyline" && e.closed)) {
         const s =
           e.points && e.points.length === 4
@@ -880,14 +1020,11 @@
       html += `<div class="form-grid">${label("Poloha X", measure(anchor.x), "x")}${label("Poloha Y", measure(anchor.y), "y")}</div><label>Vrstva<select data-prop="layer" ${locked ? "disabled" : ""}>${this.project.layers.map((l) => `<option value="${esc(l.id)}" ${l.id === e.layer ? "selected" : ""} ${l.locked ? "disabled" : ""}>${esc(l.name)}</option>`).join("")}</select></label>`;
       if (e.groupId)
         html += `<p class="muted">Člen skupiny ${esc(e.groupName || "Skupina objektů")} · Alt + kliknutí vybere jeden člen.</p><button id="ungroup-member" class="text-button">Rozdělit skupinu</button>`;
-      if (part)
-        html += `<div><div class="edge-heading">Ohranění · kliknutí přepíná 0 / 1 / 2 mm</div><div class="edge-buttons">${["Dolní", "Pravá", "Horní", "Levá"].map((name, i) => `<button type="button" data-edge="${i}" class="${spec.banding[i] ? "active" : ""}" ${locked ? "disabled" : ""}>${name}${spec.banding[i] ? ` · ${spec.banding[i]}` : ""}</button>`).join("")}</div></div>`;
+      if (part && (spec?.banding || inCutlist)) {
+        const banding = spec?.banding || e.banding || [0, 0, 0, 0];
+        html += `<div><div class="edge-heading">Ohranění · kliknutí přepíná 0 / 1 / 2 mm</div><div class="edge-buttons">${["Dolní", "Pravá", "Horní", "Levá"].map((name, i) => `<button type="button" data-edge="${i}" class="${banding[i] ? "active" : ""}" ${locked ? "disabled" : ""}>${name}${banding[i] ? ` · ${banding[i]}` : ""}</button>`).join("")}</div></div>`;
+      }
       html += `<div class="inspector-actions"><button id="inspect-edit" ${locked ? "disabled" : ""}>${icon("edit")}Úpravy</button><button id="delete-selected" ${locked ? "disabled" : ""}>${icon("trash")}Smazat</button></div>`;
-      if (
-        type === "rectangle" ||
-        (type === "polyline" && e.closed)
-      )
-        html += `<button id="convert-panel" class="text-button" ${locked ? "disabled" : ""}>Převést na dílec <span>↗</span></button>`;
       if (type === "region" && !part)
         html += `<button id="assign-region-part" class="text-button" ${locked ? "disabled" : ""}>Přiřadit polotovar <span>↗</span></button>`;
       html += "</div>";
@@ -902,14 +1039,39 @@
             (input.onchange = () =>
               this.changeProperty(e.id, input.dataset.prop, input.value)),
         );
+      if ($("toggle-cutlist-action")) {
+        $("toggle-cutlist-action").onclick = () => {
+          this.commit(() => {
+            if (inCutlist) {
+              e.cutListEnabled = false;
+            } else {
+              e.cutListEnabled = true;
+              if (!e.thickness && !e.part?.thickness) e.thickness = 18;
+              if (!e.quantity && !e.part?.quantity) e.quantity = 1;
+              if (!e.material && !e.part?.material) e.material = "Lamino";
+              if (!e.banding && !e.part?.banding) e.banding = [0, 0, 0, 0];
+              if (!e.name) e.name = "Dílec";
+            }
+          });
+          this.toast(inCutlist ? "Objekt odebrán z kusovníku." : "Objekt zařazen do kusovníku.");
+          this.renderProperties();
+          this.renderParts();
+          this.renderCutlist();
+        };
+      }
       document.querySelectorAll("[data-edge]").forEach(
         (b) =>
           (b.onclick = () =>
             this.commit(() => {
               const target = this.project.entities.find((q) => q.id === e.id),
                 i = +b.dataset.edge;
-              const spec = partSpec(target);
-              spec.banding[i] = { 0: 1, 1: 2, 2: 0 }[spec.banding[i]] ?? 0;
+              if (target.part) {
+                target.part.banding = target.part.banding || [0, 0, 0, 0];
+                target.part.banding[i] = { 0: 1, 1: 2, 2: 0 }[target.part.banding[i]] ?? 0;
+              } else {
+                target.banding = target.banding || [0, 0, 0, 0];
+                target.banding[i] = { 0: 1, 1: 2, 2: 0 }[target.banding[i]] ?? 0;
+              }
             })),
       );
       if ($("assign-region-part"))
@@ -1445,7 +1607,7 @@
                 { x: p.x + w, y: p.y + h },
                 { x: p.x, y: p.y + h },
               ];
-              this.add([{ type: "rectangle", points: pts, closed: true }]);
+              this.add([{ type: "rectangle", points: pts, closed: true, cutListEnabled: false }]);
               this.tools.points = [];
               this.updateToolUI();
               this.canvas.canvas.focus();

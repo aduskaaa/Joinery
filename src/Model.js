@@ -71,7 +71,17 @@
   const isPart = (e) =>
     e.type === "panel" ||
     (e.type === "region" && !!e.part && !!e.stockPoints) ||
-    (e.type === "polyline" && e.closed && (e.thickness != null || !!e.part));
+    (e.type === "polyline" && e.closed && (e.thickness != null || !!e.part)) ||
+    (e.cutListEnabled === true && ["rectangle", "polyline", "panel", "region"].includes(e.type));
+  const isInCutlist = (e) => {
+    if (!e) return false;
+    if (e.cutListEnabled === false) return false;
+    if (e.cutListEnabled === true) return true;
+    if (e.type === "panel") return true;
+    if (e.type === "region" && !!e.part && !!e.stockPoints) return true;
+    if (e.type === "polyline" && e.closed && (e.thickness != null || !!e.part)) return true;
+    return false;
+  };
   const partSpec = (e) => (e.type === "region" ? (e.part || e) : e);
   function emptyProject() {
     return {
@@ -541,6 +551,7 @@
     panel,
     panelSize,
     isPart,
+    isInCutlist,
     partSpec,
     uid,
     validateProject,

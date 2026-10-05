@@ -283,7 +283,7 @@
               { x: p.x + w, y: p.y + h },
               { x: p.x, y: p.y + h },
             ];
-            a.add([{ type: "rectangle", points: pts, closed: true }]);
+            a.add([{ type: "rectangle", points: pts, closed: true, cutListEnabled: false }]);
             this.preview();
             return;
           }
@@ -299,7 +299,7 @@
             distance(pts[1], pts[2]) < 0.001
           )
             return;
-          a.add([{ type: "rectangle", points: pts, closed: true }]);
+          a.add([{ type: "rectangle", points: pts, closed: true, cutListEnabled: false }]);
           this.points = [];
           a.updateToolUI();
           this.preview();
@@ -418,7 +418,7 @@
             type: "polyline",
             points: pts,
             closed: close,
-            ...(close ? { thickness: 18, quantity: 1, banding: [0, 0, 0, 0] } : {}),
+            ...(close ? { thickness: 18, quantity: 1, banding: [0, 0, 0, 0], cutListEnabled: false } : {}),
           },
         ]);
         this.points = [];

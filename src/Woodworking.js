@@ -13,7 +13,7 @@
     distance,
     TAU,
   } = Joinery.Geometry;
-  const { panelSize, uid, emptyProject, validateProject } = Joinery.Model;
+  const { panelSize, isInCutlist, uid, emptyProject, validateProject } = Joinery.Model;
   const {
     primitives,
     fontSize,
@@ -36,13 +36,7 @@
     );
   function cutList(project) {
     const cadRows = (project.entities || [])
-      .filter(
-        (e) =>
-          e.cutListEnabled !== false &&
-          (e.type === "panel" ||
-            (e.type === "region" && e.part && e.stockPoints) ||
-            (e.type === "polyline" && e.closed && (e.thickness != null || e.part))),
-      )
+      .filter((e) => isInCutlist(e))
       .map((e, i) => {
         // These are declared blank sizes, not an estimate of material consumption.
         const part = e.type === "panel" ? e : (e.part || e),
@@ -57,10 +51,10 @@
         return {
           id: e.id,
           partId: `P${String(i + 1).padStart(3, "0")}`,
-          name: e.name || "Panel",
+          name: e.name || (e.type === "panel" ? "Panel" : "Dílec"),
           length: round(Math.max(width, height)),
           width: round(Math.min(width, height)),
-          thickness: part.thickness,
+          thickness: part.thickness ?? 18,
           quantity: part.quantity || 1,
           material: part.material || "Unspecified",
           materialClass: part.materialClass || "",
@@ -1268,6 +1262,7 @@
   Joinery.Woodworking = {
     bomSummary,
     cutList,
+    isInCutlist,
     materialConsumption,
     download,
     escapeHTML,

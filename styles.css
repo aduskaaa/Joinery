@@ -11,6 +11,7 @@
   --border: #333333;
   --accent: #ffffff;
   --accent-bg: #303030;
+  --hover: #222222;
   --grid: #161616;
   --grid-major: #292929;
   --warning: #cccccc;
@@ -28,6 +29,7 @@ html[data-theme="light"] {
   --border: #cccccc;
   --accent: #000000;
   --accent-bg: #dddddd;
+  --hover: #e5e5e5;
   --grid: #eeeeee;
   --grid-major: #dddddd;
   --warning: #444444;
@@ -992,6 +994,118 @@ kbd {
 .table-action-btn:hover {
   background: var(--hover);
   border-color: var(--accent);
+}
+.table-action-btn.danger {
+  color: #ef4444;
+  border-color: rgba(239, 68, 68, 0.4);
+}
+.table-action-btn.danger:hover {
+  background: rgba(239, 68, 68, 0.15);
+  border-color: #ef4444;
+}
+.row-actions {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+.secondary-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border-radius: 6px;
+  padding: 8px 14px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 12px;
+  transition: all 0.15s ease;
+}
+.secondary-button:hover {
+  background: var(--hover);
+  border-color: var(--accent);
+}
+.secondary-button.small,
+.primary-button.small {
+  padding: 4px 10px;
+  font-size: 11px;
+  height: auto;
+}
+.cutlist-toggle-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  margin-bottom: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.cutlist-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 500;
+}
+.cutlist-badge.badge-in {
+  color: #22c55e;
+}
+.cutlist-badge.badge-out {
+  color: var(--muted);
+}
+.status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.multi-cutlist-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 10px 0;
+}
+.drawing-candidates-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 360px;
+  overflow-y: auto;
+  margin-top: 12px;
+  padding-right: 4px;
+}
+.candidate-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  gap: 12px;
+}
+.candidate-info {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.candidate-info strong {
+  font-size: 12px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.candidate-info small {
+  color: var(--muted);
+  font-size: 11px;
+}
+.candidate-add-btn {
+  flex-shrink: 0;
 }
 .table-wrap {
   overflow: auto;

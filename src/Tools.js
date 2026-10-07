@@ -292,6 +292,442 @@
       a.canvas.canvas.focus();
     }
   }
+  /** Rotation shares one pivot and one rigid transform across the whole selection. */
+  class JoinTool extends WorkflowTool {
+    constructor(app, system) {
+      super(app, system);
+      this.options = { tolerance: 0.1, close: false };
+      this.footerKeys = this.noSnap = true;
+      this.invalidMessage = "Zadejte platnou toleranci spojení v mm.";
+    }
+    reset() {
+      super.reset();
+      this.cache = this.result = null;
+      this.message = "Vyberte obrysy · Shift + klik přidává do výběru";
+    }
+    activate() {
+      super.activate();
+      this.showPreview();
+    }
+    fields() {
+      return [
+        ["tolerance", "Tolerance [mm]", 0.1],
+        ["close", "Uzavřít obrys", false, "checkbox"],
+      ];
+    }
+    hint() {
+      return this.message;
+    }
+    optionsChanged() {
+      this.showPreview();
+    }
+    click(p, e = {}, raw = p) {
+      const hit = this.app.canvas.pick(raw);
+      this.app.select(hit?.id || null, e.shiftKey, e.altKey);
+      this.showPreview();
+    }
+    move() {
+      this.showPreview();
+    }
+    showPreview() {
+      const a = this.app,
+        key = JSON.stringify([[...a.selection], this.options]);
+      if (
+        this.cache?.project === a.project &&
+        this.cache.entities === a.project.entities &&
+        this.cache.key === key
+      )
+        return;
+      this.cache = { project: a.project, entities: a.project.entities, key };
+      this.result = null;
+      a.canvas.preview = [];
+      if (!a.selection.size) {
+        this.message = "Vyberte obrysy · Shift + klik přidává do výběru";
+        return;
+      }
+      try {
+        const selected = a.editableSelection();
+        if (selected.length !== a.selection.size)
+          throw new Error("Vybrané objekty musí být viditelné a odemčené.");
+        this.result = Joinery.GeometryEngine.GeometryEngine.join(
+          selected,
+          this.options.tolerance,
+          this.options,
+        );
+        a.canvas.preview = [this.result];
+        this.message = `${selected.length} objektů → ${this.result.closed || Joinery.Boolean.isBooleanShape(this.result) ? "uzavřený obrys" : "otevřený obrys"} · Použít / Enter`;
+      } catch (error) {
+        this.message = error.message;
+      }
+      a.canvas.invalidate();
+    }
+    apply() {
+      this.showPreview();
+      const a = this.app,
+        result = this.result;
+      if (!result) {
+        a.toast(this.message);
+        return;
+      }
+      const ids = new Set(a.editableSelection().map((e) => e.id));
+      const committed = a.commit(() => {
+        a.project.entities = a.project.entities.filter((e) => !ids.has(e.id));
+        a.project.entities.push(result);
+        a.selection = new Set([result.id]);
+      });
+      if (committed !== false) {
+        this.reset();
+        this.system.renderHUD();
+      }
+    }
+    finish() {
+      this.apply();
+    }
+  }
+  class MirrorTool extends WorkflowTool {
+    constructor(app, system) {
+      super(app, system);
+      this.options = { x1: 0, y1: 0, x2: 0, y2: 100, copy: true };
+      this.footerKeys = this.liveFields = true;
+      this.invalidMessage = "Zadejte dva různé platné body osy zrcadlení.";
+    }
+    reset() {
+      super.reset();
+      this.numeric = true;
+    }
+    activate() {
+      super.activate();
+      this.options.copy = true;
+      this.initialAxis();
+    }
+    initialAxis() {
+      const selected = this.app.editableSelection();
+      if (selected.length) {
+        const b = Joinery.Geometry.bounds(selected),
+          c = midpoint(b.min, b.max);
+        Object.assign(this.options, {
+          x1: c.x,
+          y1: c.y,
+          x2: c.x,
+          y2: c.y + 100,
+        });
+      }
+      this.showPreview();
+    }
+    fields() {
+      return [
+        ["x1", "Osa A X [mm]", 0],
+        ["y1", "Y [mm]", 0],
+        ["x2", "Osa B X [mm]", 0],
+        ["y2", "Y [mm]", 100],
+        ["copy", "Ponechat původní", true, "checkbox"],
+      ];
+    }
+    axis() {
+      return [
+        { x: this.options.x1, y: this.options.y1 },
+        { x: this.options.x2, y: this.options.y2 },
+      ];
+    }
+    valid() {
+      return (
+        this.axis().every((p) =>
+          [p.x, p.y].every((n) => Number.isFinite(n) && Math.abs(n) <= 1e8),
+        ) && distance(...this.axis()) > 1e-8
+      );
+    }
+    hint() {
+      if (!this.app.editableSelection().length)
+        return "Vyberte objekty nebo skupinu ke zrcadlení.";
+      return this.points.length && !this.numeric
+        ? "Zvolte druhý bod osy · Shift: vodorovná / svislá osa"
+        : "Zvolte první a druhý bod osy · Nebo zadejte body dole a potvrďte Použít / Enter";
+    }
+    optionsChanged(key) {
+      if (key !== "copy") {
+        this.numeric = true;
+        this.points = [];
+      }
+    }
+    mirrored(entity) {
+      const G = Joinery.Geometry,
+        [a, b] = this.axis(),
+        u = unit(sub(b, a));
+      const vector = (v) => sub(mul(u, 2 * G.dot(v, u)), v);
+      const out = G.transformEntity(entity, (p) => add(a, vector(sub(p, a))));
+      const annotations = (original, copy) => {
+        if (
+          original.type === "dimension" &&
+          (original.dimensionAxis ||
+            ["horizontal", "vertical"].includes(original.mode))
+        )
+          copy.dimensionAxis = vector(
+            original.dimensionAxis ||
+              (original.mode === "vertical" ? { x: 0, y: 1 } : { x: 1, y: 0 }),
+          );
+        if (original.type === "angle")
+          [copy.points[1], copy.points[2]] = [copy.points[2], copy.points[1]];
+        if (original.type === "text") {
+          const theta =
+              original.rotation ??
+              (original.orientation === "vertical" ? Math.PI / 2 : 0),
+            direction = vector({ x: Math.cos(theta), y: Math.sin(theta) });
+          let rotation = Math.atan2(direction.y, direction.x);
+          // CAD labels stay readable instead of reversing the glyph shapes.
+          if (rotation > Math.PI / 2) rotation -= Math.PI;
+          if (rotation < -Math.PI / 2) rotation += Math.PI;
+          copy.rotation = rotation;
+        }
+        original.contents?.forEach((child, i) =>
+          annotations(child, copy.contents[i]),
+        );
+      };
+      annotations(entity, out);
+      return out;
+    }
+    showPreview() {
+      const selected = this.app.editableSelection();
+      this.app.canvas.preview =
+        this.valid() && selected.length
+          ? selected.map((e) => this.mirrored(e))
+          : [];
+      this.app.canvas.toolVector =
+        this.valid() && selected.length
+          ? { a: this.axis()[0], b: this.axis()[1] }
+          : null;
+      this.app.canvas.invalidate();
+    }
+    click(p, e = {}, raw = p) {
+      if (!this.app.editableSelection().length) {
+        const hit = this.app.canvas.pick(raw);
+        if (hit) {
+          this.app.select(hit.id, e.shiftKey, e.altKey);
+          this.initialAxis();
+          this.system.renderHUD();
+        }
+        return;
+      }
+      if (!this.points.length) {
+        this.points = [{ ...p }];
+        this.numeric = false;
+        Object.assign(this.options, { x1: p.x, y1: p.y, x2: p.x, y2: p.y });
+        this.showPreview();
+        this.system?.renderHUD();
+      } else {
+        this.move(p);
+        this.finish();
+      }
+    }
+    move(p) {
+      if (this.points.length && !this.numeric) {
+        this.options.x2 = p.x;
+        this.options.y2 = p.y;
+      }
+      this.showPreview();
+    }
+    apply() {
+      this.finish();
+    }
+    finish() {
+      const a = this.app;
+      if (!this.valid()) {
+        a.toast(this.invalidMessage);
+        return;
+      }
+      const selected = a.editableSelection();
+      if (!selected.length || selected.length !== a.selection.size) {
+        a.toast("Vyberte viditelné a odemčené objekty nebo skupinu.");
+        return;
+      }
+      const items = selected.map((e) => this.mirrored(e));
+      if (this.options.copy) {
+        for (const e of items) e.id = uid();
+        Joinery.Model.regroupCopies(items);
+      }
+      const committed = a.commit(() => {
+        if (this.options.copy) a.project.entities.push(...items);
+        else
+          for (let i = 0; i < selected.length; i++)
+            Object.assign(selected[i], items[i]);
+        a.selection = new Set(items.map((e) => e.id));
+      });
+      if (committed !== false) {
+        this.reset();
+        this.system.renderHUD();
+        a.canvas.canvas.focus();
+      }
+    }
+  }
+  class RotateTool extends WorkflowTool {
+    constructor(app, system) {
+      super(app, system);
+      this.options = { degrees: 90, cx: 0, cy: 0 };
+      this.footerKeys = this.liveFields = true;
+    }
+    activate() {
+      super.activate();
+      this.centerSelection();
+    }
+    reset() {
+      super.reset();
+      this.numeric = true;
+    }
+    centerSelection() {
+      const selected = this.app.editableSelection();
+      this.numeric = true;
+      if (selected.length) {
+        const b = Joinery.Geometry.bounds(selected),
+          c = midpoint(b.min, b.max);
+        this.options.cx = c.x;
+        this.options.cy = c.y;
+      }
+      this.showPreview();
+    }
+    fields() {
+      return [
+        ["degrees", "Úhel [°]", 90],
+        ["cx", "Střed X [mm]", 0],
+        ["cy", "Střed Y [mm]", 0],
+      ];
+    }
+    hint() {
+      if (!this.app.editableSelection().length)
+        return "Vyberte dílec nebo skupinu objektů.";
+      if (this.numeric)
+        return "Úhel a střed → Použít / Enter · Nebo klikněte na nový střed otáčení";
+      return this.points.length < 2
+        ? "Zvolte výchozí směr od středu"
+        : "Zvolte cílový směr · Shift: krok 15° · Enter: potvrdit";
+    }
+    optionsChanged(key) {
+      this.numeric = true;
+      if (key === "cx" || key === "cy") this.points = [];
+    }
+    pivot() {
+      return { x: this.options.cx, y: this.options.cy };
+    }
+    valid() {
+      return (
+        [this.options.degrees, this.options.cx, this.options.cy].every(
+          Number.isFinite,
+        ) &&
+        Math.abs(this.options.degrees) <= 1e9 &&
+        Math.abs(this.options.cx) <= 1e8 &&
+        Math.abs(this.options.cy) <= 1e8
+      );
+    }
+    rotated(entity) {
+      const G = Joinery.Geometry,
+        radians = ((this.options.degrees % 360) * Math.PI) / 180,
+        out = G.transformEntity(entity, (p) =>
+          G.rotatePoint(p, this.pivot(), radians),
+        );
+      const annotations = (original, copy) => {
+        if (
+          original.type === "dimension" &&
+          (original.dimensionAxis ||
+            ["horizontal", "vertical"].includes(original.mode))
+        ) {
+          const axis =
+            original.dimensionAxis ||
+            (original.mode === "vertical" ? { x: 0, y: 1 } : { x: 1, y: 0 });
+          copy.dimensionAxis = G.rotatePoint(axis, { x: 0, y: 0 }, radians);
+        }
+        if (original.type === "text")
+          copy.rotation =
+            (original.rotation ??
+              (original.orientation === "vertical" ? Math.PI / 2 : 0)) +
+            radians;
+        original.contents?.forEach((child, i) =>
+          annotations(child, copy.contents[i]),
+        );
+      };
+      annotations(entity, out);
+      return out;
+    }
+    showPreview() {
+      this.app.canvas.preview = this.valid()
+        ? this.app.editableSelection().map((e) => this.rotated(e))
+        : [];
+      this.app.canvas.invalidate();
+    }
+    click(p, e = {}, raw = p) {
+      if (!this.app.editableSelection().length) {
+        const hit = this.app.canvas.pick(raw);
+        if (hit) {
+          this.app.select(hit.id, e.shiftKey, e.altKey);
+          this.centerSelection();
+          this.system.renderHUD();
+        }
+        return;
+      }
+      if (!this.points.length) {
+        this.options.cx = p.x;
+        this.options.cy = p.y;
+        this.options.degrees = 0;
+        this.points = [{ ...p }];
+        this.numeric = false;
+        this.showPreview();
+      } else if (this.numeric) this.finish();
+      else if (this.points.length === 1) {
+        if (distance(p, this.pivot()) < 1e-8) return;
+        this.points.push({ ...p });
+        this.move(p, e);
+      } else if (distance(p, this.pivot()) >= 1e-8) {
+        this.move(p, e);
+        this.finish();
+      }
+    }
+    move(p, e = {}) {
+      if (
+        !this.numeric &&
+        this.points.length === 2 &&
+        distance(p, this.pivot()) > 1e-8
+      ) {
+        const delta =
+          angle(this.pivot(), p) - angle(this.pivot(), this.points[1]);
+        let degrees =
+          (Math.atan2(Math.sin(delta), Math.cos(delta)) * 180) / Math.PI;
+        if (e.shiftKey) degrees = Math.round(degrees / 15) * 15;
+        this.options.degrees = degrees;
+      }
+      this.showPreview();
+      this.app.canvas.toolVector = this.points.length
+        ? { a: this.pivot(), b: p }
+        : null;
+    }
+    apply() {
+      this.finish();
+    }
+    finish() {
+      const a = this.app;
+      if (!this.valid()) {
+        a.toast("Zadejte platný úhel a souřadnice středu.");
+        return;
+      }
+      const selected = a.editableSelection();
+      if (!selected.length) {
+        a.toast("Vyberte odemčený dílec nebo skupinu.");
+        return;
+      }
+      if (!this.numeric && this.points.length < 2) {
+        a.toast("Zvolte výchozí a cílový směr nebo zadejte úhel.");
+        return;
+      }
+      if (Math.abs(this.options.degrees % 360) < 1e-9) {
+        this.reset();
+        return;
+      }
+      // Preview and commit use exactly the same geometry, including holes and stock.
+      a.commit(() => {
+        for (const e of selected) Object.assign(e, this.rotated(e));
+      });
+      this.reset();
+      this.numeric = true;
+      this.system.renderHUD();
+      a.canvas.canvas.focus();
+    }
+  }
   class EraserTool extends WorkflowTool {
     constructor(a, s) {
       super(a, s);
@@ -684,26 +1120,14 @@
           grid: s.grid,
           gridSize: s.gridSize,
           gridOrigin: moving && base ? base : { x: 0, y: 0 },
-          gridPriority: moving
-            ? !!base
-            : [
-                "line",
-                "polyline",
-                "rectangle",
-                "circle",
-                "arc",
-                "handle-arc",
-                "drill",
-                "slot",
-                "text",
-                "detail",
-              ].includes(this.active) ||
-              (this.active === "leader" && !!base),
+          gridPriority: moving && !!base,
           object: s.object,
           base,
           ortho:
             (s.ortho || e.shiftKey) &&
-            ["line", "polyline", "move", "copy", "slot"].includes(this.active),
+            ["line", "polyline", "move", "copy", "slot", "mirror"].includes(
+              this.active,
+            ),
           modes: {
             ...s.snapModes,
             parallel:
@@ -772,7 +1196,7 @@
         return;
       }
       if (["trim", "extend"].includes(this.active)) {
-        this.trimExtend(this.snap(raw, e).point, this.active, raw);
+        this.trimExtend(raw, this.active, raw);
         return;
       }
       if (["move", "copy"].includes(this.active) && !a.selection.size) {
@@ -1335,8 +1759,42 @@
     trimExtend(p, mode, raw = p) {
       const a = this.app,
         e = a.canvas.pick(raw);
-      if (!e || e.type !== "line") {
-        a.toast("Klikněte na úsečku poblíž upravovaného konce.");
+      if (!e) return;
+      const blocked = Joinery.Model.groupMembers(a.project, e.id).some(
+        (member) => {
+          const layer = a.project.layers.find((l) => l.id === member.layer);
+          return layer?.locked || layer?.visible === false;
+        },
+      );
+      if (blocked) {
+        a.toast("Objekt nebo jeho skupina je v zamčené či skryté vrstvě.");
+        return;
+      }
+      if (mode === "trim") {
+        try {
+          const result = Joinery.GeometryEngine.GeometryEngine.trimEntity(
+            e,
+            a.canvas.visibleEntities(),
+            raw,
+          );
+          const committed = a.commit(() => {
+            const index = a.project.entities.findIndex(
+              (source) => source.id === e.id,
+            );
+            a.project.entities.splice(index, 1, ...result);
+            a.selection = new Set(result.map((item) => item.id));
+          });
+          if (committed !== false) {
+            a.canvas.selected = a.selection;
+            a.renderProperties();
+          }
+        } catch (error) {
+          a.toast(error.message);
+        }
+        return;
+      }
+      if (e.type !== "line") {
+        a.toast("Klikněte na úsečku poblíž prodlužovaného konce.");
         return;
       }
       const [start, end] = e.points,
@@ -1415,7 +1873,7 @@
             : "Vyberte kružnici nebo oblouk",
           move: n ? "Vyberte cílový bod" : "Vyberte základní bod",
           copy: n ? "Vyberte cíl kopie" : "Vyberte základní bod",
-          trim: "Vyberte úsečku u ořezávaného konce",
+          trim: "Klikněte na úsek čáry, který chcete odstranit",
           extend: "Vyberte úsečku u prodlužovaného konce",
         }[this.active] || "Připraveno"
       );
@@ -1453,6 +1911,9 @@
     Tools,
     SelectionTool,
     TransformTool,
+    RotateTool,
+    MirrorTool,
+    JoinTool,
     EraserTool,
     OffsetTool,
     MeasureTool,

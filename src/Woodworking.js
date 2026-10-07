@@ -374,7 +374,7 @@
                 y: p.radius * Math.sin(p.start + sweep),
               });
             pieces.push(
-              `<path d="M${x(a)} ${y(a)} A${round(p.radius)} ${round(p.radius)} 0 ${sweep > Math.PI ? 1 : 0} 0 ${x(b)} ${y(b)}" ${common}/>`,
+              `<path d="M${x(a)} ${y(a)} A${round(p.radius)} ${round(p.radius)} 0 ${sweep > Math.PI ? 1 : 0} 0 ${x(b)} ${y(b)}${p.closed ? " Z" : ""}" ${common}/>`,
             );
           }
         }
@@ -564,7 +564,11 @@
           [40, e.size],
           [1, ascii(e.text)],
         ];
-        if (e.orientation === "vertical") textPairs.push([50, 90]);
+        if (e.rotation != null || e.orientation === "vertical")
+          textPairs.push([
+            50,
+            round(((e.rotation ?? Math.PI / 2) * 180) / Math.PI),
+          ]);
         pairs(textPairs);
         meta(e);
         continue;

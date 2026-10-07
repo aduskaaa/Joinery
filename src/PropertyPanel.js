@@ -139,9 +139,28 @@
           }
           if (e.type === "detail")
             geo +=
+              input("name", "Označení detailu", e.name || "", "text") +
               input("vx", "X pohledu [mm]", e.points[0].x) +
               input("vy", "Y pohledu [mm]", e.points[0].y) +
               input("detailScale", "Měřítko detailu 1 :", e.detailScale || 1);
+          if (e.type === "crop") {
+            const minX = Math.min(...e.points.map((p) => p.x)),
+              maxX = Math.max(...e.points.map((p) => p.x)),
+              minY = Math.min(...e.points.map((p) => p.y)),
+              maxY = Math.max(...e.points.map((p) => p.y)),
+              w = maxX - minX,
+              h = maxY - minY;
+            geo +=
+              input("name", "Název oblasti", e.name || "", "text") +
+              select("mode", "Stav na výkresu", e.mode || "include", [
+                { id: "include", name: "Zahrnout na výkres (chci)" },
+                { id: "exclude", name: "Vyloučit z výkresu (nechci)" },
+              ]) +
+              input("x0", "X rohu [mm]", minX) +
+              input("y0", "Y rohu [mm]", minY) +
+              input("cropWidth", "Šířka oblasti [mm]", w) +
+              input("cropHeight", "Výška oblasti [mm]", h);
+          }
           if (e.center)
             geo +=
               input(
@@ -387,6 +406,35 @@
           for (const e of a.editableSelection()) {
             const spec = e.part || e;
             if (
+              e.type === "crop" &&
+              ["cropWidth", "cropHeight", "x0", "y0", "mode"].includes(key)
+            ) {
+              if (["cropWidth", "cropHeight"].includes(key) && !(value > 0))
+                throw new Error("Rozměry oblasti musí být kladné.");
+              const minX = Math.min(...e.points.map((p) => p.x)),
+                maxX = Math.max(...e.points.map((p) => p.x)),
+                minY = Math.min(...e.points.map((p) => p.y)),
+                maxY = Math.max(...e.points.map((p) => p.y));
+              let nx0 = minX,
+                ny0 = minY,
+                nw = maxX - minX,
+                nh = maxY - minY;
+              if (key === "x0") nx0 = value;
+              if (key === "y0") ny0 = value;
+              if (key === "cropWidth") nw = value;
+              if (key === "cropHeight") nh = value;
+              if (key === "mode") {
+                e.mode = value;
+                e.stroke = value === "exclude" ? "#dc2626" : "#2563eb";
+              } else {
+                e.points = [
+                  { x: nx0, y: ny0 },
+                  { x: nx0 + nw, y: ny0 },
+                  { x: nx0 + nw, y: ny0 + nh },
+                  { x: nx0, y: ny0 + nh },
+                ];
+              }
+            } else if (
               e.type === "detail" &&
               ["cx", "cy", "vx", "vy", "radius", "detailScale"].includes(key)
             ) {
@@ -568,6 +616,7 @@
       dimension: "Kóta",
       leader: "Odkazová kóta",
       detail: "Detail",
+      crop: "Oblast výkresu",
     };
   }
   J.PropertyPanel = { PropertyPanel };

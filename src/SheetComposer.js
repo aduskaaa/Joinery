@@ -146,9 +146,37 @@
         );
         if (details.length)
           html += `<label>Detail<select id="detail-to-place">${details.map((d) => `<option value="${esc(d.id)}">${esc(d.name || "Detail")}</option>`).join("")}</select></label><button id="add-detail-view">+ Umístit detail</button>`;
+        const crops = this.app.project.entities.filter(
+          (e) => e.type === "crop",
+        );
+        if (crops.length)
+          html += `<label>Oblast výkresu<select id="crop-to-place">${crops.map((c) => `<option value="${esc(c.id)}">${esc(c.name || "Oblast")}${c.mode === "exclude" ? " (vyloučeno)" : ""}</option>`).join("")}</select></label><button id="add-crop-view">+ Umístit oblast</button>`;
         if (s) {
+          const detailEntity = s.entityId
+            ? this.app.project.entities.find((e) => e.id === s.entityId)
+            : null;
+          const detailTitle = detailEntity?.name
+            ? (detailEntity.name.toLowerCase().startsWith("detail")
+                ? detailEntity.name
+                : `Detail ${detailEntity.name}`)
+            : "Detail";
+          const cropEntity =
+            s.type === "crop" && s.entityId
+              ? this.app.project.entities.find((e) => e.id === s.entityId)
+              : null;
+          const cropTitle = cropEntity?.name
+            ? `Pohled: ${cropEntity.name}`
+            : "Oblast výkresu";
+          const viewTitle =
+            s === p.stamp
+              ? "Razítko"
+              : s.type === "detail"
+                ? esc(detailTitle)
+                : s.type === "crop"
+                  ? esc(cropTitle)
+                  : "Pohled";
           html +=
-            `<h3>${s === p.stamp ? "Razítko" : s.type === "detail" ? "Detail" : "Pohled"}</h3>` +
+            `<h3>${viewTitle}</h3>` +
             ["x", "y", "w", "h", ...(s.scale != null ? ["scale"] : [])]
               .map(
                 (key) =>
@@ -256,6 +284,42 @@
             w: size,
             h: size + 8,
             scale: d.detailScale || 1,
+          });
+          this.selected = p.views.at(-1);
+          this.renderSettings();
+          this.renderCanvas();
+          this.save();
+        });
+      document
+        .getElementById("add-crop-view")
+        ?.addEventListener("click", () => {
+          const select = document.getElementById("crop-to-place");
+          if (!select) return;
+          const id = select.value,
+            c = this.app.project.entities.find((e) => e.id === id);
+          if (!c) return;
+          const pts = c.points || [];
+          const minX = Math.min(...pts.map((p) => p.x)),
+            maxX = Math.max(...pts.map((p) => p.x)),
+            minY = Math.min(...pts.map((p) => p.y)),
+            maxY = Math.max(...pts.map((p) => p.y)),
+            cw = Math.max(10, maxX - minX),
+            ch = Math.max(10, maxY - minY);
+          const [pw, ph] = PDF.formats[p.format];
+          const scale = this.app.project.settings.drawingScale || 10;
+          let w = Math.round(cw / scale + 10);
+          let h = Math.round(ch / scale + 10);
+          w = Math.max(30, Math.min(pw - 30, w));
+          h = Math.max(30, Math.min(ph - 30, h));
+          p.views.push({
+            id: J.Model.uid(),
+            type: "crop",
+            entityId: id,
+            x: 15,
+            y: 15,
+            w,
+            h,
+            scale,
           });
           this.selected = p.views.at(-1);
           this.renderSettings();

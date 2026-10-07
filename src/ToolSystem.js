@@ -489,11 +489,55 @@
     constructor(a, s) {
       super(a, s);
       this.options = { detailScale: 1, name: "A" };
+      this.customNameSet = false;
+    }
+    activate() {
+      super.activate();
+      if (!this.customNameSet) {
+        this.options.name = this.nextDetailName();
+      }
+    }
+    optionsChanged(name) {
+      if (name === "name") {
+        this.customNameSet = true;
+      }
+    }
+    nextDetailName() {
+      const details = (this.app?.project?.entities || []).filter(
+        (e) => e.type === "detail",
+      );
+      const used = new Set(details.map((d) => d.name).filter(Boolean));
+      for (let i = 0; i < 26; i++) {
+        const letter = String.fromCharCode(65 + i);
+        if (!used.has(letter)) return letter;
+      }
+      let i = 1;
+      while (used.has(`Detail ${i}`)) i++;
+      return `Detail ${i}`;
+    }
+    advanceName() {
+      const current = this.options.name;
+      if (typeof current === "string") {
+        const letterMatch = current.match(/^([A-Z])$/);
+        if (letterMatch) {
+          const code = letterMatch[1].charCodeAt(0);
+          if (code >= 65 && code < 90) {
+            this.options.name = String.fromCharCode(code + 1);
+            return;
+          }
+        }
+        const numMatch = current.match(/^(.*?)(\d+)$/);
+        if (numMatch) {
+          this.options.name = `${numMatch[1]}${parseInt(numMatch[2], 10) + 1}`;
+          return;
+        }
+      }
+      this.options.name = this.nextDetailName();
     }
     fields() {
       return [
         ["detailScale", "Měřítko detailu 1:", 1],
-        ["name", "Označení", "A", "text"],
+        ["name", "Označení", this.options.name || this.nextDetailName(), "text"],
       ];
     }
     entity(p) {
@@ -508,7 +552,7 @@
         points: [p],
         factor,
         detailScale: this.options.detailScale,
-        name: this.options.name,
+        name: this.options.name || this.nextDetailName(),
         contents: GE.crop(
           this.app.canvas.visibleEntities(),
           this.points[0],
@@ -528,7 +572,10 @@
       if (e.radius <= 0.01)
         throw new Error("Detail musí mít nenulový poloměr.");
       this.app.add([e]);
+      this.advanceName();
+      this.customNameSet = false;
       this.reset();
+      this.system.renderHUD();
     }
     move(p) {
       this.app.canvas.preview =
@@ -543,6 +590,114 @@
           : this.points.length === 2
             ? [this.entity(p)]
             : [];
+    }
+  }
+  class CropRegionTool extends CADTool {
+    constructor(a, s) {
+      super(a, s);
+      this.options = {
+        name: "Nárys",
+        mode: "include",
+      };
+      this.customNameSet = false;
+    }
+    activate() {
+      super.activate();
+      if (!this.customNameSet) {
+        this.options.name = this.nextCropName();
+      }
+    }
+    optionsChanged(name) {
+      if (name === "name") this.customNameSet = true;
+    }
+    nextCropName() {
+      const crops = (this.app?.project?.entities || []).filter(
+        (e) => e.type === "crop",
+      );
+      const names = new Set(crops.map((c) => c.name).filter(Boolean));
+      if (!names.has("Nárys")) return "Nárys";
+      if (!names.has("Půdorys")) return "Půdorys";
+      if (!names.has("Bokorys")) return "Bokorys";
+      let i = 1;
+      while (names.has(`Oblast ${i}`)) i++;
+      return `Oblast ${i}`;
+    }
+    advanceName() {
+      const current = this.options.name;
+      if (typeof current === "string") {
+        const numMatch = current.match(/^(.*?)(\d+)$/);
+        if (numMatch) {
+          this.options.name = `${numMatch[1]}${parseInt(numMatch[2], 10) + 1}`;
+          return;
+        }
+      }
+      this.options.name = this.nextCropName();
+    }
+    fields() {
+      return [
+        ["name", "Název oblasti", this.options.name || this.nextCropName(), "text"],
+        [
+          "mode",
+          "Stav na výkresu",
+          this.options.mode || "include",
+          "select",
+          [
+            ["include", "Zahrnout na výkres (chci)"],
+            ["exclude", "Vyloučit z výkresu (nechci)"],
+          ],
+        ],
+      ];
+    }
+    hint() {
+      return this.points.length === 0
+        ? "První roh oblasti výkresu."
+        : "Protilehlý roh oblasti výkresu.";
+    }
+    entity(p, event) {
+      const a = this.points[0],
+        b = p;
+      const minX = Math.min(a.x, b.x),
+        maxX = Math.max(a.x, b.x),
+        minY = Math.min(a.y, b.y),
+        maxY = Math.max(a.y, b.y);
+      return {
+        type: "crop",
+        name: this.options.name || this.nextCropName(),
+        mode: this.options.mode || "include",
+        enabled: true,
+        points: [
+          { x: minX, y: minY },
+          { x: maxX, y: minY },
+          { x: maxX, y: maxY },
+          { x: minX, y: maxY },
+        ],
+        cutListEnabled: false,
+        lineStyle: "dashed",
+        stroke: this.options.mode === "exclude" ? "#dc2626" : "#2563eb",
+      };
+    }
+    click(p, event) {
+      if (this.points.length === 0) {
+        this.points.push(p);
+        return;
+      }
+      const p0 = this.points[0];
+      if (Math.abs(p.x - p0.x) < 0.1 || Math.abs(p.y - p0.y) < 0.1) {
+        throw new Error("Oblast musí mít nenulovou šířku a výšku.");
+      }
+      const e = this.entity(p, event);
+      this.app.add([e]);
+      this.advanceName();
+      this.customNameSet = false;
+      this.reset();
+      this.system.renderHUD();
+    }
+    move(p, event) {
+      if (this.points.length === 1) {
+        this.app.canvas.preview = [this.entity(p, event)];
+      } else {
+        this.app.canvas.preview = [];
+      }
     }
   }
   class SelectionTool extends CADTool {
@@ -642,6 +797,9 @@
         select: new J.Tools.SelectionTool(app, this),
         move: new J.Tools.TransformTool(app, this, "move"),
         copy: new J.Tools.TransformTool(app, this, "copy"),
+        rotate: new J.Tools.RotateTool(app, this),
+        mirror: new J.Tools.MirrorTool(app, this),
+        join: new J.Tools.JoinTool(app, this),
         eraser: new J.Tools.EraserTool(app, this),
         measure: new J.Tools.MeasureTool(app, this),
         array: new SelectionTool(app, this, "array"),
@@ -659,6 +817,7 @@
         grain: new GrainTool(app, this),
         gaps: new GapCheckerTool(app, this),
         detail: new DetailTool(app, this),
+        crop: new CropRegionTool(app, this),
         offset: new J.Tools.OffsetTool(app, this),
       };
       for (const id of new Set([
@@ -695,6 +854,17 @@
       this.current?.activate();
       this.app.canvas.diagnostics =
         id === "gaps" ? this.app.canvas.diagnostics : null;
+      const flyoutItem = document.querySelector(`.tool-flyout [data-tool="${id}"]`);
+      if (flyoutItem) {
+        const group = flyoutItem.closest(".tool-group");
+        const primary = group?.querySelector(".tool-group-primary");
+        if (primary) {
+          primary.dataset.tool = id;
+          primary.dataset.tooltip = ToolSystem.names[id] || id;
+          primary.setAttribute("aria-label", primary.dataset.tooltip);
+          primary.innerHTML = ToolSystem.icon(id);
+        }
+      }
       this.renderHUD();
     }
     dispatch(method, raw, event) {
@@ -720,6 +890,20 @@
       );
       if (tool.interactive) this.app.tools.points = tool.points;
       this.updateFloatingHUD();
+      if (tool.liveFields)
+        for (const input of document.querySelectorAll(
+          "#tool-options [data-hud]",
+        )) {
+          if (
+            input !== document.activeElement &&
+            tool.options[input.dataset.hud] != null
+          ) {
+            if (input.type === "checkbox")
+              input.checked = !!tool.options[input.dataset.hud];
+            else if (typeof tool.options[input.dataset.hud] === "number")
+              input.value = Number(tool.options[input.dataset.hud].toFixed(6));
+          }
+        }
       if (tool.hint) {
         const hint = document.querySelector("#tool-options .select-hint");
         if (hint && hint.textContent !== tool.hint())
@@ -951,6 +1135,7 @@
             );
           if (rebuild) this.renderHUD();
         };
+        input.onchange = input.oninput;
         l.append(input);
         bar.append(l);
       }
@@ -961,6 +1146,18 @@
         apply.dataset.toolApply = "";
         apply.onclick = () => {
           try {
+            if (
+              tool.footerKeys &&
+              ![...bar.querySelectorAll("input")].every(
+                (i) => i.value !== "" && i.validity.valid,
+              )
+            ) {
+              this.app.toast(
+                tool.invalidMessage ||
+                  "Doplňte platný úhel a souřadnice středu.",
+              );
+              return;
+            }
             tool.apply();
             this.app.canvas.canvas.focus();
           } catch (error) {
@@ -1101,6 +1298,22 @@
     handleKeydown(e) {
       const tool = this.current,
         root = this.floatingHUD;
+      if (tool?.footerKeys && e.target.closest?.("#tool-options")) {
+        if (e.key === "Escape") {
+          this.app.tools.cancel();
+          this.app.canvas.canvas.focus();
+          return true;
+        }
+        if (e.key === "Enter") {
+          if (
+            [...document.querySelectorAll("#tool-options input")].every(
+              (i) => i.value !== "" && i.validity.valid,
+            )
+          )
+            tool.apply();
+          return true;
+        }
+      }
       if (!root || root.hidden) return false;
       const inputs = [...root.querySelectorAll("input:not(:disabled)")],
         focused = root.contains(document.activeElement);
@@ -1146,22 +1359,6 @@
       }
       if (id === "ungroup") {
         this.app.ungroupSelection();
-        return;
-      }
-      if (id === "join") {
-        try {
-          const selection = this.app.editableSelection(),
-            out = GE.join(selection);
-          this.app.commit(() => {
-            this.app.project.entities = this.app.project.entities.filter(
-              (e) => !selection.some((s) => s.id === e.id),
-            );
-            this.app.project.entities.push(out);
-            this.app.selection = new Set([out.id]);
-          });
-        } catch (e) {
-          this.app.toast(e.message);
-        }
         return;
       }
       if (id === "explode") {
@@ -1319,6 +1516,7 @@
           "surface",
           "fastener",
           "detail",
+          "crop",
           "text",
         ],
       ],
@@ -1332,6 +1530,8 @@
           "select",
           "move",
           "copy",
+          "rotate",
+          "mirror",
           "eraser",
           "measure",
           "array",
@@ -1357,8 +1557,9 @@
       grain: "Směr vláken",
       gaps: "Kontrola mezer",
       detail: "Detail",
+      crop: "Oblast výkresu",
       offset: "Paralela",
-      join: "Spojit do lomené čáry",
+      join: "Spojit do obrysu",
       explode: "Rozložit",
       trim: "Oříznout",
       extend: "Prodloužit",
@@ -1368,6 +1569,8 @@
       "boolean-union": "Sjednotit",
       "boolean-subtract": "Odečíst",
       "boolean-intersect": "Průnik",
+      rotate: "Otočit",
+      mirror: "Zrcadlit",
       array: "Pole",
       group: "Seskupit",
       ungroup: "Rozdělit skupinu",
@@ -1388,6 +1591,7 @@
       "handle-arc": "Začátek → konec → úchyt.",
       arc: "Začátek → konec → vytáhnout oblouk ze středu · Enter: potvrdit",
       detail: "Střed → poloměr oblasti → umístění detailu.",
+      crop: "První roh → protilehlý roh oblasti výkresu.",
       grain: "Dílec a začátek šipky → konec šipky.",
       break: "Úsečka a začátek mezery → konec mezery.",
       gaps: "Kliknutím obnovíte kontrolu. Červené značky nejsou exportované.",
@@ -1401,11 +1605,15 @@
     ChamferTool,
     GapCheckerTool,
     DetailTool,
+    CropRegionTool,
     LeaderTool,
     ReferenceSymbolTool,
     GrainTool,
     HandleArcTool,
     TransformTool: J.Tools.TransformTool,
+    RotateTool: J.Tools.RotateTool,
+    MirrorTool: J.Tools.MirrorTool,
+    JoinTool: J.Tools.JoinTool,
     EraserTool: J.Tools.EraserTool,
     OffsetTool: J.Tools.OffsetTool,
     MeasureTool: J.Tools.MeasureTool,

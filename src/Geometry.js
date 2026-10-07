@@ -43,7 +43,7 @@
     return add(a, mul(r, t));
   }
   /** Analytic intersections avoid zoom-dependent tessellation errors. */
-  function lineCircleIntersections(a, b, c, r) {
+  function lineCircleIntersections(a, b, c, r, infinite = false) {
     const d = sub(b, a),
       f = sub(a, c),
       aa = dot(d, d);
@@ -57,7 +57,8 @@
     return ts
       .filter(
         (t, i) =>
-          t >= -EPS && t <= 1 + EPS && (i === 0 || Math.abs(t - ts[0]) > EPS),
+          (infinite || (t >= -EPS && t <= 1 + EPS)) &&
+          (i === 0 || Math.abs(t - ts[0]) > EPS),
       )
       .map((t) => add(a, mul(d, t)));
   }
@@ -75,7 +76,7 @@
     return (
       e.type !== "arc" ||
       normalizeAngle(angle(e.center, p) - e.start) <=
-        normalizeAngle(e.end - e.start) + EPS
+        (normalizeAngle(e.end - e.start) || TAU) + EPS
     );
   }
   function circleThrough(a, b, c) {
@@ -182,6 +183,147 @@
       out.push([pts.at(-1), pts[0]]);
     return out;
   }
+  /** Exact boundary edges for picking, snapping and trimming (no display tessellation). */
+  function curveEdges(e) {
+    if (e.symbolType) return [];
+    const line = (a, b) => ({ points: [a, b] });
+    const arc = (center, radius, start, sweep) => ({
+      center,
+      radius,
+      start,
+      sweep,
+    });
+    if (e.type === "region" || (e.type === "panel" && e.polygons))
+      return e.polygons.flatMap((polygon) =>
+        polygon.flatMap((ring) =>
+          ring.map((a, i) => line(a, ring[(i + 1) % ring.length])),
+        ),
+      );
+    if (["circle", "drill", "arc"].includes(e.type)) {
+      const sweep =
+        e.type === "arc" ? normalizeAngle(e.end - e.start) || TAU : TAU;
+      const arcEdge = arc(e.center, e.radius, e.start || 0, sweep);
+      if (e.type === "arc" && e.closed && sweep < TAU - 1e-6) {
+        const pStart = add(e.center, {
+          x: e.radius * Math.cos(e.start || 0),
+          y: e.radius * Math.sin(e.start || 0),
+        });
+        const pEnd = add(e.center, {
+          x: e.radius * Math.cos((e.start || 0) + sweep),
+          y: e.radius * Math.sin((e.start || 0) + sweep),
+        });
+        if (e.closed === "sector" || e.sector === true) {
+          return [arcEdge, line(pEnd, e.center), line(e.center, pStart)];
+        }
+        return [arcEdge, line(pEnd, pStart)];
+      }
+      return [arcEdge];
+    }
+    if (e.type === "slot") {
+      const [a, b] = e.points,
+        r = e.width / 2,
+        theta = angle(a, b),
+        n = mul(perpendicular(unit(sub(b, a))), r);
+      if (distance(a, b) < EPS) return [arc(a, r, 0, TAU)];
+      return [
+        line(sub(a, n), sub(b, n)),
+        arc(b, r, theta - Math.PI / 2, Math.PI),
+        line(add(b, n), add(a, n)),
+        arc(a, r, theta + Math.PI / 2, Math.PI),
+      ];
+    }
+    if (!["line", "polyline", "rectangle", "panel", "cutout"].includes(e.type))
+      return [];
+    const edges = [],
+      count =
+        e.closed || ["rectangle", "panel", "cutout"].includes(e.type)
+          ? e.points.length
+          : e.points.length - 1;
+    for (let i = 0; i < count; i++) {
+      const a = e.points[i],
+        b = e.points[(i + 1) % e.points.length],
+        bulge = e.bulges?.[i] || 0,
+        chord = distance(a, b);
+      if (chord < EPS) continue;
+      if (Math.abs(bulge) < EPS) edges.push(line(a, b));
+      else {
+        const center = add(
+          midpoint(a, b),
+          mul(
+            perpendicular(unit(sub(b, a))),
+            (chord * (1 - bulge * bulge)) / (4 * bulge),
+          ),
+        );
+        edges.push(
+          arc(
+            center,
+            distance(center, a),
+            angle(center, a),
+            4 * Math.atan(bulge),
+          ),
+        );
+      }
+    }
+    return edges;
+  }
+  function edgePoint(e, t) {
+    return e.center
+      ? add(e.center, {
+          x: e.radius * Math.cos(e.start + t * e.sweep),
+          y: e.radius * Math.sin(e.start + t * e.sweep),
+        })
+      : add(e.points[0], mul(sub(e.points[1], e.points[0]), t));
+  }
+  function edgeParameter(e, p) {
+    if (!e.center) {
+      const d = sub(e.points[1], e.points[0]);
+      return dot(sub(p, e.points[0]), d) / (dot(d, d) || 1);
+    }
+    if (distance(edgePoint(e, 0), p) < EPS) return 0;
+    if (Math.abs(e.sweep) < TAU - EPS && distance(edgePoint(e, 1), p) < EPS)
+      return 1;
+    return (
+      normalizeAngle((angle(e.center, p) - e.start) * Math.sign(e.sweep)) /
+      Math.abs(e.sweep)
+    );
+  }
+  function edgeClosest(e, p) {
+    if (!e.center) return projectPoint(p, ...e.points);
+    const q = add(e.center, mul(unit(sub(p, e.center)), e.radius));
+    if (edgeParameter(e, q) <= 1 + EPS) return q;
+    const a = edgePoint(e, 0),
+      b = edgePoint(e, 1);
+    return distance(p, a) <= distance(p, b) ? a : b;
+  }
+  function edgeIntersections(a, b, infiniteA = false) {
+    let points;
+    if (a.center && b.center)
+      points = circleIntersections(a.center, a.radius, b.center, b.radius);
+    else if (a.center)
+      points = lineCircleIntersections(...b.points, a.center, a.radius);
+    else if (b.center)
+      points = lineCircleIntersections(
+        ...a.points,
+        b.center,
+        b.radius,
+        infiniteA,
+      );
+    else {
+      const p = intersection(...a.points, ...b.points, infiniteA);
+      if (p) return [p];
+      // Collinear overlaps have meaningful trim boundaries at their endpoints.
+      return b.points.filter(
+        (p) => distance(p, projectPoint(p, ...a.points, !infiniteA)) < EPS,
+      );
+    }
+    return points.filter((p) =>
+      [a, b].every(
+        (e, i) =>
+          (infiniteA && i === 0 && !e.center) ||
+          (edgeParameter(e, p) >= -EPS && edgeParameter(e, p) <= 1 + EPS),
+      ),
+    );
+  }
   function bounds(entities) {
     const pts = entities
       .flatMap((e) => {
@@ -261,17 +403,8 @@
           .filter((c) => !c.detailFill)
           .map((c) => hitDistance(c, p)),
       );
-    if (["circle", "drill", "arc"].includes(e.type)) {
-      if (
-        e.type === "arc" &&
-        normalizeAngle(angle(e.center, p) - e.start) >
-          normalizeAngle(e.end - e.start)
-      )
-        return Math.min(
-          ...[arcPoints(e)[0], arcPoints(e).at(-1)].map((q) => distance(p, q)),
-        );
-      return Math.abs(distance(p, e.center) - e.radius);
-    }
+    if (["circle", "drill", "arc"].includes(e.type))
+      return distance(p, edgeClosest(curveEdges(e)[0], p));
     if (e.type === "text") return distance(p, e.points[0]);
     if (e.type === "dimension") {
       const g = dimensionGeometry(e);
@@ -283,6 +416,11 @@
       return Math.min(...e.points.map((q) => distance(p, q)));
     if (e.type === "radius")
       return distance(p, projectPoint(p, e.center, e.points[0]));
+    const curves = curveEdges(e);
+    if (curves.length)
+      return Math.min(
+        ...curves.map((edge) => distance(p, edgeClosest(edge, p))),
+      );
     const edges = segments(e);
     return edges.length
       ? Math.min(...edges.map(([a, b]) => distance(p, projectPoint(p, a, b))))
@@ -341,9 +479,9 @@
     { paperScale = 1, termination = "slash" } = {},
   ) {
     const [a, b, placement = midpoint(a, b)] = e.points;
-    let dir = unit(sub(b, a));
-    if (e.mode === "horizontal") dir = { x: 1, y: 0 };
-    if (e.mode === "vertical") dir = { x: 0, y: 1 };
+    let dir = e.dimensionAxis ? unit(e.dimensionAxis) : unit(sub(b, a));
+    if (!e.dimensionAxis && e.mode === "horizontal") dir = { x: 1, y: 0 };
+    if (!e.dimensionAxis && e.mode === "vertical") dir = { x: 0, y: 1 };
     // Canonical direction keeps slash terminations consistent when endpoints
     // are picked in reverse order. Projection is independent of its sign.
     if (dir.x < -EPS || (Math.abs(dir.x) < EPS && dir.y < 0))
@@ -518,12 +656,11 @@
             : { x: base.x, y: point.y };
       return { point, kind: "Grid", distance: distance(constrained, point) };
     };
-    // Explicit grid placement wins over nearby objects. Moving uses a grid
-    // anchored at the base point, so an off-grid part retains its geometry.
+    // Move/copy uses a grid anchored at the base point. Drawing leaves OSNAP
+    // enabled before the grid fallback, allowing exact off-grid connections.
     if (grid && gridPriority) return snapGrid();
     const candidates = [],
-      allEdges = [],
-      circles = [];
+      allEdges = [];
     const push = (point, kind, priority = 0) => {
       const d = distance(constrained, point);
       if (
@@ -537,24 +674,28 @@
     };
     if (object) {
       for (const e of entities) {
-        const edges = segments(e);
+        const edges = curveEdges(e);
         allEdges.push(...edges);
-        if (
-          ["circle", "drill", "arc"].includes(e.type) &&
-          Math.abs(distance(e.center, constrained) - e.radius) <= tolerance
-        )
-          circles.push(e);
         if (modes.endpoint !== false) {
           const pts =
             e.type === "arc"
-              ? [arcPoints(e)[0], arcPoints(e).at(-1)]
+              ? edges.flatMap((edge) =>
+                  Math.abs(edge.sweep) < TAU - EPS
+                    ? [edgePoint(edge, 0), edgePoint(edge, 1)]
+                    : [],
+                )
               : e.type === "region"
                 ? vertices(e)
                 : e.points || [];
-          pts.forEach((q) => push(q, "Endpoint", 3));
+          pts.forEach((q) => push(q, "Endpoint", 5));
         }
         if (modes.midpoint !== false)
-          edges.forEach(([a, b]) => push(midpoint(a, b), "Midpoint", 2));
+          for (const edge of edges) {
+            if (edge.center && Math.abs(edge.sweep) >= TAU - EPS)
+              for (let i = 0; i < 4; i++)
+                push(edgePoint(edge, i / 4), "Quadrant", 2);
+            else push(edgePoint(edge, 0.5), "Midpoint", 2);
+          }
         if (
           modes.center !== false &&
           (e.center ||
@@ -562,68 +703,47 @@
         )
           push(entityCenter(e), "Center", 2);
         if (base && modes.perpendicular !== false)
-          edges.forEach(([a, b]) => {
-            const q = projectPoint(base, a, b);
-            if (distance(q, a) > EPS && distance(q, b) > EPS)
-              push(q, "Perpendicular", 1);
-          });
-        if (
-          base &&
-          modes.perpendicular !== false &&
-          ["circle", "drill", "arc"].includes(e.type) &&
-          distance(base, e.center) > EPS
-        ) {
-          const radial = unit(sub(base, e.center));
-          for (const sign of [1, -1]) {
-            const q = add(e.center, mul(radial, e.radius * sign));
-            if (onArc(e, q)) push(q, "Perpendicular", 1);
+          for (const edge of edges) {
+            if (edge.center) {
+              if (distance(base, edge.center) < EPS) continue;
+              const radial = unit(sub(base, edge.center));
+              for (const sign of [1, -1]) {
+                const q = add(edge.center, mul(radial, edge.radius * sign));
+                if (edgeParameter(edge, q) <= 1 + EPS)
+                  push(q, "Perpendicular", 1);
+              }
+            } else {
+              const [a, b] = edge.points,
+                q = projectPoint(base, a, b);
+              if (distance(q, a) > EPS && distance(q, b) > EPS)
+                push(q, "Perpendicular", 1);
+            }
           }
-        }
         if (base && !ortho && modes.parallel !== false)
-          edges.forEach(([a, b]) =>
+          for (const edge of edges.filter((edge) => !edge.center))
             push(
               projectPoint(
                 grid ? gridPoint : constrained,
                 base,
-                add(base, sub(b, a)),
+                add(base, sub(edge.points[1], edge.points[0])),
                 false,
               ),
               "Parallel",
               -1,
-            ),
-          );
+            );
       }
       if (modes.intersection !== false) {
         const near = allEdges
           .filter(
-            ([a, b]) =>
-              distance(constrained, projectPoint(constrained, a, b)) <=
+            (edge) =>
+              distance(constrained, edgeClosest(edge, constrained)) <=
               tolerance,
           )
           .slice(0, 100);
         for (let i = 0; i < near.length; i++)
-          for (let j = i + 1; j < near.length; j++) {
-            const q = intersection(...near[i], ...near[j]);
-            if (q) push(q, "Intersection", 4);
-          }
-        for (const c of circles)
-          for (const edge of near)
-            for (const q of lineCircleIntersections(
-              ...edge,
-              c.center,
-              c.radius,
-            ))
-              if (onArc(c, q)) push(q, "Intersection", 4);
-        for (let i = 0; i < circles.length; i++)
-          for (let j = i + 1; j < circles.length; j++)
-            for (const q of circleIntersections(
-              circles[i].center,
-              circles[i].radius,
-              circles[j].center,
-              circles[j].radius,
-            ))
-              if (onArc(circles[i], q) && onArc(circles[j], q))
-                push(q, "Intersection", 4);
+          for (let j = i + 1; j < near.length; j++)
+            for (const q of edgeIntersections(near[i], near[j]))
+              push(q, "Intersection", 4);
       }
     }
     candidates.sort(
@@ -656,6 +776,11 @@
     distance,
     dot,
     entityCenter,
+    curveEdges,
+    edgePoint,
+    edgeParameter,
+    edgeClosest,
+    edgeIntersections,
     hitDistance,
     intersection,
     length,

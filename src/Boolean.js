@@ -23,18 +23,70 @@
     "intersection",
     "xor",
   ]);
-  const SIMPLE_TYPES = new Set(["rectangle", "panel", "cutout"]);
+  const SIMPLE_TYPES = new Set(["rectangle", "panel", "cutout", "polygon"]);
   const CURVE_TYPES = new Set(["circle", "drill", "slot"]);
   const POINT_EPSILON = 1e-9;
+  const normalizeAngle = (a) => ((a % TAU) + TAU) % TAU;
+
+  function isClosedPolyline(entity) {
+    if (!entity || entity.type !== "polyline") return false;
+    if (entity.closed === true || entity.closed === 1) return true;
+    if (
+      Array.isArray(entity.points) &&
+      entity.points.length >= 4 &&
+      samePoint(entity.points[0], entity.points[entity.points.length - 1])
+    )
+      return true;
+    return false;
+  }
+
+  function isClosedArc(entity) {
+    if (!entity || entity.type !== "arc") return false;
+    if (
+      entity.closed === true ||
+      entity.closed === "sector" ||
+      entity.closed === "chord" ||
+      entity.sector === true
+    )
+      return true;
+    if (Number.isFinite(entity.start) && Number.isFinite(entity.end)) {
+      const sweep = normalizeAngle(entity.end - entity.start);
+      if (
+        Math.abs(sweep - TAU) < 1e-6 ||
+        Math.abs(entity.end - entity.start) >= TAU - 1e-6
+      )
+        return true;
+      if (sweep < 1e-6 && entity.start !== entity.end) return true;
+    }
+    if (Number.isFinite(entity.sweep) && Math.abs(entity.sweep) >= TAU - 1e-6)
+      return true;
+    return false;
+  }
 
   function isBooleanShape(entity) {
-    return Boolean(
-      entity &&
-      (SIMPLE_TYPES.has(entity.type) ||
-        CURVE_TYPES.has(entity.type) ||
-        entity.type === "region" ||
-        (entity.type === "polyline" && entity.closed === true)),
-    );
+    if (!entity || typeof entity !== "object") return false;
+    if (
+      entity.type === "region" ||
+      Array.isArray(entity.polygons)
+    )
+      return true;
+    if (
+      SIMPLE_TYPES.has(entity.type) ||
+      CURVE_TYPES.has(entity.type)
+    )
+      return true;
+    if (isClosedPolyline(entity)) return true;
+    if (isClosedArc(entity)) return true;
+    if (entity.closed === true) {
+      if (Array.isArray(entity.points) && entity.points.length >= 3) return true;
+      if (
+        entity.center &&
+        Number.isFinite(entity.radius) &&
+        entity.radius > 0
+      )
+        return true;
+    }
+    return false;
   }
 
   function toleranceValue(options) {
@@ -345,28 +397,123 @@
     return ring;
   }
 
+  function arcRing(entity, tolerance) {
+    if (
+      !entity.center ||
+      !Number.isFinite(entity.radius) ||
+      entity.radius <= 0 ||
+      entity.radius > LIMITS.coordinate
+    )
+      throw new Error(
+        "Circle radius and slot width must be finite and positive.",
+      );
+    const c = point(entity.center);
+    const radius = entity.radius;
+    let sweep = Number.isFinite(entity.sweep)
+      ? Math.abs(entity.sweep)
+      : Number.isFinite(entity.start) && Number.isFinite(entity.end)
+        ? normalizeAngle(entity.end - entity.start) || TAU
+        : TAU;
+    if (sweep >= TAU - 1e-6) {
+      return circleRing(c, radius, tolerance);
+    }
+    const start = Number.isFinite(entity.start) ? entity.start : 0;
+    const n = arcSegments(radius, sweep, tolerance);
+    const ring = [];
+    for (let i = 0; i <= n; i++) {
+      const a = start + (sweep * i) / n;
+      ring.push({
+        x: c.x + radius * Math.cos(a),
+        y: c.y + radius * Math.sin(a),
+      });
+    }
+    if (entity.closed === "sector" || entity.sector === true) {
+      ring.push(c);
+    }
+    return ring;
+  }
+
+  function expandBulges(points, bulges, closed, tolerance) {
+    if (!Array.isArray(points)) return [];
+    if (!Array.isArray(bulges) || !bulges.some(Boolean)) {
+      return points;
+    }
+    const out = [];
+    const count = closed ? points.length : points.length - 1;
+    for (let i = 0; i < count; i++) {
+      const a = points[i];
+      const b = points[(i + 1) % points.length];
+      const bulge = bulges[i] || 0;
+      if (Math.abs(bulge) < 1e-9) {
+        out.push(a);
+      } else {
+        const chord = Math.hypot(b.x - a.x, b.y - a.y);
+        if (chord < 1e-9) {
+          out.push(a);
+        } else {
+          const sweep = 4 * Math.atan(bulge);
+          const radius = (chord * (1 + bulge * bulge)) / (4 * Math.abs(bulge));
+          const n = arcSegments(radius, Math.abs(sweep), tolerance);
+          const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+          const dx = b.x - a.x,
+            dy = b.y - a.y;
+          const sagitta = (chord * (1 - bulge * bulge)) / (4 * bulge);
+          const center = {
+            x: mid.x - (dy / chord) * sagitta,
+            y: mid.y + (dx / chord) * sagitta,
+          };
+          const startAngle = Math.atan2(a.y - center.y, a.x - center.x);
+          for (let j = 0; j < n; j++) {
+            const ang = startAngle + (sweep * j) / n;
+            out.push({
+              x: center.x + radius * Math.cos(ang),
+              y: center.y + radius * Math.sin(ang),
+            });
+          }
+        }
+      }
+    }
+    if (!closed && points.length) {
+      out.push(points.at(-1));
+    }
+    return out;
+  }
+
   function entityPolygons(entity, tolerance, budget) {
     if (!isBooleanShape(entity))
       throw new Error(
-        "Boolean tools accept panels, rectangles, closed polylines, cutouts, circles, drill holes, slots, and regions.",
+        "Boolean tools accept panels, rectangles, closed polylines, closed arcs, cutouts, circles, drill holes, slots, and regions.",
       );
     let polygons;
     if (
       entity.type === "region" ||
-      (entity.type === "panel" && entity.polygons !== undefined)
+      Array.isArray(entity.polygons)
     )
-      polygons = entity.polygons;
+      polygons = entity.polygons || [];
     else if (entity.type === "circle" || entity.type === "drill")
       polygons = [[circleRing(entity.center, entity.radius, tolerance)]];
-    else if (entity.type === "slot") polygons = [[slotRing(entity, tolerance)]];
-    else
-      polygons = [
-        [
-          entity.bulges?.some(Boolean)
-            ? Joinery.Geometry.vertices(entity)
-            : entity.points,
-        ],
-      ];
+    else if (entity.type === "arc")
+      polygons = [[arcRing(entity, tolerance)]];
+    else if (entity.type === "slot")
+      polygons = [[slotRing(entity, tolerance)]];
+    else if (
+      entity.center &&
+      Number.isFinite(entity.radius) &&
+      entity.radius > 0 &&
+      !Array.isArray(entity.points)
+    )
+      polygons = [[circleRing(entity.center, entity.radius, tolerance)]];
+    else {
+      let rawPts = entity.points || [];
+      if (
+        rawPts.length > 2 &&
+        samePoint(rawPts[0], rawPts[rawPts.length - 1])
+      ) {
+        rawPts = rawPts.slice(0, -1);
+      }
+      const pts = expandBulges(rawPts, entity.bulges, true, tolerance);
+      polygons = [[pts]];
+    }
     return validatePolygons(polygons, budget);
   }
 

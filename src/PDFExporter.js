@@ -41,7 +41,7 @@
     static defaultLayout(project) {
       const format = "A3-L",
         entities = J.Woodworking.visibleEntities(project).filter(
-          (e) => e.type !== "detail" && !e.detailId,
+          (e) => e.type !== "detail" && !e.detailId && e.type !== "crop",
         ),
         scale = Math.max(
           project.settings.drawingScale || 10,
@@ -159,8 +159,29 @@
         return commands;
       }
       const base = J.Woodworking.visibleEntities(project).filter(
-        (e) => e.type !== "detail" && !e.detailId,
+        (e) => e.type !== "detail" && !e.detailId && e.type !== "crop",
       );
+      const excludeCrops = project.entities.filter(
+        (e) => e.type === "crop" && e.mode === "exclude",
+      );
+      const isEntityExcluded = (e) => {
+        if (!excludeCrops.length) return false;
+        const b = G.bounds([e]);
+        if (!b?.min || !b?.max) return false;
+        return excludeCrops.some((ex) => {
+          const exPts = ex.points;
+          const exMinX = Math.min(...exPts.map((p) => p.x)),
+            exMaxX = Math.max(...exPts.map((p) => p.x)),
+            exMinY = Math.min(...exPts.map((p) => p.y)),
+            exMaxY = Math.max(...exPts.map((p) => p.y));
+          return (
+            b.min.x >= exMinX - 0.01 &&
+            b.max.x <= exMaxX + 0.01 &&
+            b.min.y >= exMinY - 0.01 &&
+            b.max.y <= exMaxY + 0.01
+          );
+        });
+      };
       for (const view of page.views) {
         let entities = [
             ...base,
@@ -191,20 +212,57 @@
                 },
               ]),
           ],
-          sourceCenter = null;
+          sourceCenter = null,
+          crop = null,
+          cropBox = null;
         if (view.type === "detail") {
           const detail = project.entities.find(
             (e) => e.id === view.entityId && e.type === "detail",
           );
           if (!detail) continue;
           entities = [
-            ...detail.contents,
+            ...detail.contents.filter((e) => !isEntityExcluded(e)),
             ...J.GeometryEngine.GeometryEngine.detailAnnotations(
               detail,
               J.Woodworking.visibleEntities(project),
-            ),
+            ).filter((e) => !isEntityExcluded(e)),
           ];
           sourceCenter = detail.center;
+        } else if (view.type === "crop") {
+          crop = project.entities.find(
+            (e) => e.id === view.entityId && e.type === "crop",
+          );
+          if (!crop) continue;
+          const cPts = crop.points;
+          const minX = Math.min(...cPts.map((p) => p.x)),
+            maxX = Math.max(...cPts.map((p) => p.x)),
+            minY = Math.min(...cPts.map((p) => p.y)),
+            maxY = Math.max(...cPts.map((p) => p.y));
+          cropBox = {
+            minX,
+            maxX,
+            minY,
+            maxY,
+            w: maxX - minX,
+            h: maxY - minY,
+          };
+          sourceCenter = {
+            x: (minX + maxX) / 2,
+            y: (minY + maxY) / 2,
+          };
+          entities = base.filter((e) => {
+            if (isEntityExcluded(e)) return false;
+            const b = G.bounds([e]);
+            if (!b?.min || !b?.max) return false;
+            return (
+              b.max.x >= minX - 0.01 &&
+              b.min.x <= maxX + 0.01 &&
+              b.max.y >= minY - 0.01 &&
+              b.min.y <= maxY + 0.01
+            );
+          });
+        } else {
+          entities = entities.filter((e) => !isEntityExcluded(e));
         }
         const drafting = J.Scene.draftingScene(
             entities,
@@ -227,6 +285,20 @@
             x: view.x + view.w / 2 + (p.x - center.x) / view.scale,
             y: view.y + view.h / 2 - (p.y - center.y) / view.scale,
           });
+        let clX = view.x,
+          clY = view.y,
+          clW = view.w,
+          clH = view.h;
+        if (view.type === "crop" && cropBox) {
+          const cpW = cropBox.w / view.scale,
+            cpH = cropBox.h / view.scale,
+            cpX = view.x + view.w / 2 - cpW / 2,
+            cpY = view.y + view.h / 2 - cpH / 2;
+          clX = Math.max(view.x, cpX);
+          clY = Math.max(view.y, cpY);
+          clW = Math.max(0, Math.min(view.x + view.w, cpX + cpW) - clX);
+          clH = Math.max(0, Math.min(view.y + view.h, cpY + cpH) - clY);
+        }
         commands.push(
           "q",
           `${x(view.x)} ${y(view.y + view.h)} ${x(view.w)} ${x(view.h)} re W n`,
@@ -238,20 +310,27 @@
               e.type,
             );
           if (clipGeometry) {
-            const d = project.entities.find((e) => e.id === view.entityId);
-            commands.push(
-              "q",
-              this.arcPath(
-                {
-                  x: (view.x + view.w / 2) * mm,
-                  y: (height - view.y - view.h / 2) * mm,
-                },
-                (d.radius / view.scale) * mm,
-                0,
-                Math.PI * 2,
-              ),
-              "W n",
-            );
+            if (view.type === "detail") {
+              const d = project.entities.find((e) => e.id === view.entityId);
+              commands.push(
+                "q",
+                this.arcPath(
+                  {
+                    x: (view.x + view.w / 2) * mm,
+                    y: (height - view.y - view.h / 2) * mm,
+                  },
+                  (d.radius / view.scale) * mm,
+                  0,
+                  Math.PI * 2,
+                ),
+                "W n",
+              );
+            } else if (view.type === "crop") {
+              commands.push(
+                "q",
+                `${x(clX)} ${y(clY + clH)} ${x(clW)} ${x(clH)} re W n`,
+              );
+            }
           }
           for (const p of scene.get(e.id) ||
             J.Scene.primitives(e, project.settings.units, {
@@ -314,7 +393,30 @@
           if (clipGeometry) commands.push("Q");
         }
         commands.push("Q");
-        if (sourceCenter) {
+        if (excludeCrops.length) {
+          for (const ex of excludeCrops) {
+            const exPts = ex.points;
+            const exMinX = Math.min(...exPts.map((p) => p.x)),
+              exMaxX = Math.max(...exPts.map((p) => p.x)),
+              exMinY = Math.min(...exPts.map((p) => p.y)),
+              exMaxY = Math.max(...exPts.map((p) => p.y));
+            const pTL = tx({ x: exMinX, y: exMaxY });
+            const pw = (exMaxX - exMinX) / view.scale;
+            const ph = (exMaxY - exMinY) / view.scale;
+            commands.push(
+              "q",
+              `${x(view.x)} ${y(view.y + view.h)} ${x(view.w)} ${x(view.h)} re W n`,
+              "1 G 1 g",
+              `${x(pTL.x)} ${y(pTL.y + ph)} ${x(pw)} ${x(ph)} re B`,
+              "0.5 G [4 2] 0 d",
+              `${x(0.18)} w`,
+              `${x(pTL.x)} ${y(pTL.y)} m ${x(pTL.x + pw)} ${y(pTL.y)} l S`,
+              `${x(pTL.x)} ${y(pTL.y + ph)} m ${x(pTL.x + pw)} ${y(pTL.y + ph)} l S`,
+              "Q",
+            );
+          }
+        }
+        if (sourceCenter && view.type === "detail") {
           const d = project.entities.find((e) => e.id === view.entityId);
           commands.push(
             "q",
@@ -333,18 +435,29 @@
             "S",
             "Q",
           );
+        } else if (view.type === "crop" && cropBox) {
+          commands.push(
+            "q",
+            `${x(view.x)} ${y(view.y + view.h)} ${x(view.w)} ${x(view.h)} re W n`,
+            "0.5 G [3 3] 0 d",
+            `${x(0.18)} w`,
+            `${x(clX)} ${y(clY + clH)} ${x(clW)} ${x(clH)} re S`,
+            "Q",
+          );
         }
-        if (view.type === "detail")
+        if (view.type === "detail") {
+          const detail = project.entities.find((e) => e.id === view.entityId);
+          const name = detail?.name || "Detail";
+          const hasScale = /1\s*:\s*\d+/.test(name);
           label(
-            `${project.entities.find((e) => e.id === view.entityId)?.name || "Detail"} · 1:${view.scale}`,
+            hasScale ? name : `${name} · 1:${view.scale}`,
             view.x + view.w / 2,
             Math.min(
               view.y + view.h - 2,
               view.y +
                 view.h / 2 +
                 Math.max(
-                  project.entities.find((e) => e.id === view.entityId)
-                    ?.radius || 0,
+                  detail?.radius || 0,
                   (sourceCenter?.y || 0) - bounds.min.y,
                 ) /
                   view.scale +
@@ -353,13 +466,27 @@
             2.5,
             "center",
           );
+        } else if (view.type === "crop" && crop) {
+          const name = crop.name || "Oblast";
+          const hasScale = /1\s*:\s*\d+/.test(name);
+          label(
+            hasScale ? name : `${name} · 1:${view.scale}`,
+            view.x + view.w / 2,
+            Math.min(
+              view.y + view.h - 2,
+              view.y + view.h / 2 + clH / 2 + 5,
+            ),
+            2.5,
+            "center",
+          );
+        }
       }
       if (page.stamp) {
         const s = page.stamp,
           t = project.settings.titleBlock || {},
           scale =
             page.views
-              .filter((v) => v.type === "drawing")
+              .filter((v) => v.type === "drawing" || v.type === "crop")
               .map((v) => "1:" + v.scale)
               .join(", ") || "—";
         commands.push("0 G 0 g [] 0 d");
@@ -701,6 +828,11 @@
               break;
             case "S":
               ctx.stroke();
+              ctx.beginPath();
+              break;
+            case "f":
+            case "f*":
+              ctx.fill(token === "f*" ? "evenodd" : "nonzero");
               ctx.beginPath();
               break;
             case "B":

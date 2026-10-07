@@ -227,119 +227,281 @@
         });
       return rows;
     }
-    static join(entities, tolerance = 0.1) {
-      if (
-        !entities.length ||
-        !entities.every(
-          (e) => ["line", "polyline", "arc"].includes(e.type) && !e.closed,
-        )
-      )
-        throw new Error("Vyberte otevřené úsečky, oblouky nebo lomené čáry.");
-      const paths = entities.map((e) => {
-        if (e.type !== "arc")
-          return {
-            points: structuredClone(e.points),
-            bulges: [...(e.bulges || Array(e.points.length).fill(0))].slice(
-              0,
-              e.points.length - 1,
-            ),
-          };
-        const sweep = G.normalizeAngle(e.end - e.start) || G.TAU;
-        if (sweep >= G.TAU - 1e-6)
-          throw new Error("Plný kruh nelze spojit jako otevřený oblouk.");
-        return {
-          points: [
-            add(e.center, {
-              x: e.radius * Math.cos(e.start),
-              y: e.radius * Math.sin(e.start),
-            }),
-            add(e.center, {
-              x: e.radius * Math.cos(e.end),
-              y: e.radius * Math.sin(e.end),
-            }),
-          ],
-          bulges: [Math.tan(sweep / 4)],
-        };
-      });
-      const reverse = (p) => ({
-        points: [...p.points].reverse(),
-        bulges: [...p.bulges].reverse().map((b) => -b),
-      });
-      let current = paths.shift();
-      while (paths.length) {
-        let found = false;
-        for (let i = 0; i < paths.length; i++) {
-          let path = paths[i],
-            prepend = false;
-          if (distance(current.points.at(-1), path.points[0]) <= tolerance) {
-          } else if (
-            distance(current.points.at(-1), path.points.at(-1)) <= tolerance
-          )
-            path = reverse(path);
-          else if (distance(current.points[0], path.points.at(-1)) <= tolerance)
-            prepend = true;
-          else if (distance(current.points[0], path.points[0]) <= tolerance) {
-            path = reverse(path);
-            prepend = true;
-          } else continue;
-          current = prepend
-            ? {
-                points: [...path.points.slice(0, -1), ...current.points],
-                bulges: [...path.bulges, ...current.bulges],
+    /** Join connected edges exactly; merge closed areas into one editable region. */
+    static join(entities, tolerance = 0.1, { close = false } = {}) {
+      if (!Number.isFinite(tolerance) || tolerance < 0 || tolerance > 10)
+        throw new Error("Tolerance spojení musí být 0 až 10 mm.");
+      if (!entities.length)
+        throw new Error("Vyberte objekty, které chcete spojit.");
+      const closedShapes = [],
+        edges = [],
+        nodes = [],
+        buckets = new Map(),
+        cell = Math.max(tolerance, 1e-8);
+      // Spatial buckets keep endpoint matching bounded even for long imported paths.
+      const nodeAt = (p) => {
+        if (![p?.x, p?.y].every(Number.isFinite))
+          throw new Error("Obrys obsahuje neplatný bod.");
+        const x = Math.floor(p.x / cell),
+          y = Math.floor(p.y / cell);
+        let best = null,
+          bestDistance = Infinity;
+        for (let dx = -1; dx <= 1; dx++)
+          for (let dy = -1; dy <= 1; dy++)
+            for (const n of buckets.get(`${x + dx}:${y + dy}`) || []) {
+              const d = distance(n.point, p);
+              if (d <= tolerance && d < bestDistance) {
+                best = n;
+                bestDistance = d;
               }
-            : {
-                points: [...current.points, ...path.points.slice(1)],
-                bulges: [...current.bulges, ...path.bulges],
-              };
-          paths.splice(i, 1);
-          found = true;
-          break;
-        }
-        if (!found)
-          throw new Error(
-            "Výběr netvoří navazující řetězec. Zkontrolujte mezery nebo větvení.",
-          );
-      }
-      const closed =
-        distance(current.points[0], current.points.at(-1)) <= tolerance;
-      if (closed) current.points.pop();
-      else current.bulges.push(0);
-      return {
-        id: J.Model.uid(),
-        type: "polyline",
-        layer: entities[0].layer,
-        points: current.points,
-        bulges: current.bulges,
-        closed,
-        cutListEnabled: false,
-        lineStyle: entities[0].lineStyle,
-        lineWeight: entities[0].lineWeight,
-        stroke: entities[0].stroke,
+            }
+        if (best) return best;
+        const n = { point: { ...p }, edges: [] };
+        nodes.push(n);
+        const key = `${x}:${y}`;
+        if (!buckets.has(key)) buckets.set(key, []);
+        buckets.get(key).push(n);
+        return n;
       };
+      const addEdge = (a, b, bulge = 0) => {
+        if (edges.length >= 20000)
+          throw new Error("Spojujte nejvýše 20 000 hran najednou.");
+        const first = nodeAt(a),
+          last = nodeAt(b);
+        if (first === last)
+          throw new Error(
+            "Hrana je kratší než tolerance. Snižte toleranci spojení.",
+          );
+        const edge = { first, last, bulge };
+        edges.push(edge);
+        first.edges.push(edge);
+        last.edges.push(edge);
+      };
+      for (const e of entities) {
+        if (
+          e.symbolType ||
+          !(
+            ["line", "polyline", "arc"].includes(e.type) ||
+            J.Boolean.isBooleanShape(e)
+          )
+        )
+          throw new Error(
+            "Spojit lze geometrické obrysy. Pro texty a kóty použijte Seskupit.",
+          );
+        if (J.Boolean.isBooleanShape(e)) {
+          closedShapes.push(e);
+        } else if (e.type === "arc") {
+          const sweep = G.normalizeAngle(e.end - e.start) || G.TAU;
+          if (sweep >= G.TAU - 1e-6) {
+            closedShapes.push({ ...e, type: "circle" });
+          } else {
+            const at = (t) =>
+              add(e.center, {
+                x: e.radius * Math.cos(t),
+                y: e.radius * Math.sin(t),
+              });
+            addEdge(at(e.start), at(e.end), Math.tan(sweep / 4));
+          }
+        } else {
+          for (let i = 0; i < e.points.length - 1; i++)
+            addEdge(e.points[i], e.points[i + 1], e.bulges?.[i] || 0);
+        }
+      }
+      if (nodes.some((n) => n.edges.length > 2))
+        throw new Error(
+          "Obrys se větví. Vyberte pouze hrany jednoho navazujícího obrysu.",
+        );
+      const remaining = new Set(edges),
+        paths = [];
+      while (remaining.size) {
+        const seed = remaining.values().next().value,
+          component = new Set(),
+          pending = [seed.first];
+        while (pending.length) {
+          const n = pending.pop();
+          if (component.has(n)) continue;
+          component.add(n);
+          for (const e of n.edges)
+            pending.push(e.first === n ? e.last : e.first);
+        }
+        const start =
+          [...component].find((n) => n.edges.length === 1) || seed.first;
+        let current = start;
+        const points = [{ ...start.point }],
+          bulges = [];
+        while (true) {
+          const edge = current.edges.find((e) => remaining.has(e));
+          if (!edge) break;
+          remaining.delete(edge);
+          const forward = edge.first === current;
+          current = forward ? edge.last : edge.first;
+          bulges.push(forward ? edge.bulge : -edge.bulge);
+          points.push({ ...current.point });
+        }
+        const closed = current === start;
+        if (closed) points.pop();
+        else bulges.push(0);
+        paths.push({ type: "polyline", points, bulges, closed });
+      }
+      const open = paths.filter((p) => !p.closed);
+      if (open.length > 1)
+        throw new Error(
+          "Hrany nenavazují. Spojte jejich konce nebo upravte toleranci.",
+        );
+      if (close && open.length) open[0].closed = true;
+      if (
+        paths.some((p) => !p.closed) &&
+        (closedShapes.length || paths.length > 1)
+      )
+        throw new Error(
+          "Pro spojení s uzavřenými tvary nejprve uzavřete otevřený obrys.",
+        );
+      const shapes = [...closedShapes, ...paths];
+      // Validate before replacing sources; retain analytic bulges for a single path.
+      for (const e of shapes.filter((e) => J.Boolean.isBooleanShape(e))) {
+        try {
+          J.Boolean.toPolygons(e);
+        } catch {
+          throw new Error(
+            "Obrys nelze uzavřít. Zkontrolujte křížení hran, zdvojené hrany a nulové úsečky.",
+          );
+        }
+      }
+      let result;
+      if (shapes.length === 1) result = structuredClone(shapes[0]);
+      else
+        result = {
+          type: "region",
+          polygons: J.Boolean.booleanPolygons("union", shapes),
+        };
+      result.id = J.Model.uid();
+      result.layer = entities[0].layer;
+      delete result.groupId;
+      delete result.groupName;
+      if (entities.length > 1 || paths.length) {
+        result.cutListEnabled = false;
+        for (const key of ["lineStyle", "lineWeight", "stroke"])
+          if (entities[0][key] !== undefined) result[key] = entities[0][key];
+        for (const key of ["materialKind", ...(J.Materials?.markingKeys || [])])
+          if (
+            entities[0][key] !== undefined &&
+            entities.every((e) => e[key] === entities[0][key])
+          )
+            result[key] = entities[0][key];
+      }
+      return result;
     }
     static lineIntersections(a, b, entity) {
-      if (["circle", "drill", "arc"].includes(entity.type)) {
-        const delta = sub(b, a),
-          f = sub(a, entity.center),
-          aa = dot(delta, delta),
-          bb = 2 * dot(f, delta),
-          cc = dot(f, f) - entity.radius * entity.radius,
-          disc = bb * bb - 4 * aa * cc;
-        if (aa < 1e-12 || disc < 0) return [];
-        return [
-          (-bb - Math.sqrt(disc)) / (2 * aa),
-          (-bb + Math.sqrt(disc)) / (2 * aa),
-        ]
-          .map((t) => add(a, mul(delta, t)))
-          .filter((p) => entity.type !== "arc" || G.onArc(entity, p));
-      }
-      if (entity.bulges?.some(Boolean))
-        return this.explode(entity).flatMap((e) =>
-          this.lineIntersections(a, b, e),
+      return G.curveEdges(entity).flatMap((edge) =>
+        G.edgeIntersections({ points: [a, b] }, edge, true),
+      );
+    }
+    /** Remove the clicked interval, preserving exact circular arcs and bulges. */
+    static trimEntity(entity, boundaries, point) {
+      if (
+        entity.symbolType ||
+        !["line", "polyline", "arc", "circle"].includes(entity.type)
+      )
+        throw new Error(
+          "Oříznout lze úsečku, lomenou čáru, oblouk nebo kružnici.",
         );
-      return G.segments(entity)
-        .map((s) => intersection(a, b, ...s, true, false))
-        .filter(Boolean);
+      const epsilon = 1e-6,
+        edges = G.curveEdges(entity),
+        cutters = boundaries
+          .filter((e) => e !== entity && (!entity.id || e.id !== entity.id))
+          .flatMap((e) => G.curveEdges(e));
+      let total = 0;
+      const path = edges.map((edge) => {
+        const len = edge.center
+            ? Math.abs(edge.sweep) * edge.radius
+            : distance(...edge.points),
+          offset = total;
+        total += len;
+        return { edge, len, offset };
+      });
+      if (total <= epsilon) throw new Error("Objekt nemá oříznutelnou délku.");
+      const closed =
+        entity.closed ||
+        entity.type === "circle" ||
+        (entity.type === "arc" && Math.abs(edges[0].sweep) >= G.TAU - G.EPS);
+      const values = [],
+        nearest = path
+          .map((segment) => {
+            const q = G.edgeClosest(segment.edge, point);
+            return {
+              d: distance(point, q),
+              t:
+                segment.offset +
+                Math.max(0, Math.min(1, G.edgeParameter(segment.edge, q))) *
+                  segment.len,
+            };
+          })
+          .sort((a, b) => a.d - b.d)[0];
+      for (const { edge, len, offset } of path)
+        for (const boundary of cutters)
+          for (const q of G.edgeIntersections(edge, boundary)) {
+            let value =
+              offset + Math.max(0, Math.min(1, G.edgeParameter(edge, q))) * len;
+            if (closed && total - value < epsilon) value = 0;
+            if (closed || (value > epsilon && value < total - epsilon))
+              values.push(value);
+          }
+      values.sort((a, b) => a - b);
+      const cuts = values.filter((v, i) => !i || v - values[i - 1] > epsilon);
+      if (!cuts.length || (closed && cuts.length < 2))
+        throw new Error(
+          "Průsečík nebyl nalezen. Čára musí protínat ořezávací hranici.",
+        );
+      const at = closed && total - nearest.t < epsilon ? 0 : nearest.t;
+      if (cuts.some((c) => Math.abs(c - at) < epsilon))
+        throw new Error(
+          "Klikněte dovnitř úseku, který chcete odstranit, mimo průsečík.",
+        );
+      const before = cuts.filter((c) => c < at),
+        after = cuts.filter((c) => c > at);
+      const lo = before.at(-1) ?? (closed ? cuts.at(-1) - total : 0),
+        hi = after[0] ?? (closed ? cuts[0] + total : total);
+      const ranges = closed
+        ? [[hi, lo + total]]
+        : [
+            [0, lo],
+            [hi, total],
+          ].filter(([a, b]) => b - a > epsilon);
+      const slice = (from, to, index) => {
+        const result = structuredClone(entity);
+        result.id = index === 0 ? entity.id || J.Model.uid() : J.Model.uid();
+        result.closed = false;
+        if (closed) result.cutListEnabled = false;
+        if (["arc", "circle"].includes(entity.type)) {
+          const edge = edges[0];
+          result.type = "arc";
+          result.start = edge.start + (from / total) * edge.sweep;
+          result.end = edge.start + (to / total) * edge.sweep;
+          return result;
+        }
+        const points = [],
+          bulges = [],
+          firstCycle = closed ? Math.floor(from / total) : 0,
+          lastCycle = closed ? Math.floor(to / total) : 0;
+        for (let cycle = firstCycle; cycle <= lastCycle; cycle++)
+          for (const { edge, len, offset } of path) {
+            const start = offset + cycle * total,
+              a = Math.max(from, start),
+              b = Math.min(to, start + len);
+            if (b - a <= epsilon) continue;
+            const t0 = (a - start) / len,
+              t1 = (b - start) / len;
+            if (!points.length) points.push(G.edgePoint(edge, t0));
+            points.push(G.edgePoint(edge, t1));
+            bulges.push(
+              edge.center ? Math.tan((edge.sweep * (t1 - t0)) / 4) : 0,
+            );
+          }
+        result.points = points;
+        if (entity.type === "polyline") result.bulges = [...bulges, 0];
+        return result;
+      };
+      return ranges.map(([from, to], i) => slice(from, to, i));
     }
     static explode(entity) {
       if (entity.type === "region")

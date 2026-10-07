@@ -41,7 +41,19 @@
       !material ||
       e.symbolType ||
       (e.type === "polyline" && !e.closed) ||
-      !["panel", "region", "rectangle", "polyline", "circle"].includes(e.type)
+      !(
+        [
+          "panel",
+          "region",
+          "rectangle",
+          "polyline",
+          "circle",
+          "drill",
+          "slot",
+          "cutout",
+          "arc",
+        ].includes(e.type) || J.Boolean?.isBooleanShape(e)
+      )
     )
       return [];
     let polygons;

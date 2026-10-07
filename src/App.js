@@ -152,7 +152,10 @@
         );
     }
     select(id, append = false, individual = false) {
-      if (!append) this.selection.clear();
+      if (!append) {
+        this.selection.clear();
+        if (this.booleanOptions) this.booleanOptions.explicitBaseId = null;
+      }
       if (id) {
         const members = individual
           ? this.project.entities.filter((e) => e.id === id)
@@ -419,6 +422,8 @@
       $("new-project").onclick = () => this.requestNewProject();
       $("import").onclick = () => $("file-input").click();
       $("file-input").onchange = (e) => this.importFile(e.target.files[0]);
+      if ($("inspect-edit"))
+        $("inspect-edit").onclick = () => this.operations();
       $("dialog-close").onclick = () => $("app-dialog").close();
       $("app-dialog").addEventListener("close", () => this.releasePreview());
       $("app-dialog").addEventListener("click", (e) => {
@@ -445,8 +450,9 @@
       window.addEventListener("pagehide", () => this.save());
     }
     chooseTool(id) {
-      if (["rotate", "mirror", "edge", "node"].includes(id)) return;
+      if (["edge", "node"].includes(id)) return;
       if (id === "panel") id = "rectangle";
+      if (this.booleanOptions) this.booleanOptions.explicitBaseId = null;
       this.setTab("design");
       if (id === "boolean") {
         this.booleanMenu();
@@ -1036,7 +1042,7 @@
     refreshBooleanPreview() {
       this.booleanPending = null;
       this.booleanError = "";
-      const operands = this.booleanOperands();
+      let operands = this.booleanOperands();
       this.canvas.preview = [];
       this.canvas.booleanOperands = null;
       if (operands.length < 2) {
@@ -1057,10 +1063,38 @@
           throw new Error(
             "Všechny vybrané obrysy musí být viditelné a odemčené.",
           );
-        const polygons = booleanPolygons(this.booleanOperation(), operands, {
+        const op = this.booleanOperation();
+        let polygons = booleanPolygons(op, operands, {
           tolerance: this.booleanOptions.tolerance,
         });
-        if (!polygons.length)
+        if (
+          op === "difference" &&
+          (!polygons || !polygons.length) &&
+          operands.length > 1 &&
+          !this.booleanOptions.explicitBaseId
+        ) {
+          for (let k = 1; k < operands.length; k++) {
+            try {
+              const candidate = [
+                operands[k],
+                ...operands.filter((_, idx) => idx !== k),
+              ];
+              const candidatePolygons = booleanPolygons(op, candidate, {
+                tolerance: this.booleanOptions.tolerance,
+              });
+              if (candidatePolygons && candidatePolygons.length > 0) {
+                this.selection = new Set(candidate.map((e) => e.id));
+                this.canvas.selected = this.selection;
+                operands = candidate;
+                polygons = candidatePolygons;
+                break;
+              }
+            } catch {
+              // try next candidate
+            }
+          }
+        }
+        if (!polygons || !polygons.length)
           throw new Error("Výsledek je prázdný. Původní obrysy zůstávají.");
         this.booleanPending = {
           polygons,
@@ -1094,7 +1128,19 @@
           )
           .join(
             "",
-          )}</select></label>${operation === "difference" ? `<label>Základ<select id="boolean-base" aria-label="Základ odečítání">${operands.map((e, i) => `<option value="${esc(e.id)}" ${i === 0 ? "selected" : ""}>${esc(e.name || `${e.type} ${i + 1}`)}</option>`).join("")}</select></label><label class="boolean-keep-label"><input type="checkbox" id="boolean-keep" ${this.booleanOptions.keepCutters ? "checked" : ""}>Zachovat odečítané obrysy</label>` : ""}<label title="Největší odchylka aproximace oblouku. Přímé hrany zůstávají přesné.">Tolerance<input id="boolean-tolerance" type="number" min="0.001" max="0.1" step="0.001" value="${this.booleanOptions.tolerance}"></label><span class="unit-tag">mm</span><button id="boolean-apply" class="primary-button compact-button" ${pending ? "" : "disabled"}>Použít <span>↵</span></button><button id="boolean-clear" class="quiet-button compact-button" title="Zrušit výběr obrysů">Zrušit výběr</button><button id="boolean-cancel" class="quiet-button compact-button">Zrušit</button>`;
+          )}</select></label>${
+            operation === "difference"
+              ? `<label>Základ<select id="boolean-base" aria-label="Základ odečítání">${operands
+                  .map((e, i) => {
+                    const b = bounds([e]);
+                    const w = Math.round(b?.width || 0);
+                    const h = Math.round(b?.height || 0);
+                    const dimLabel = w && h ? ` (${w}×${h} mm)` : "";
+                    return `<option value="${esc(e.id)}" ${i === 0 ? "selected" : ""}>${esc(e.name || `${e.type} ${i + 1}${dimLabel}`)}</option>`;
+                  })
+                  .join("")}</select></label><button type="button" id="boolean-swap" class="compact-button quiet-button" title="Prohodit základ a odečítaný obrys">⇄ Prohodit</button><label class="boolean-keep-label"><input type="checkbox" id="boolean-keep" ${this.booleanOptions.keepCutters ? "checked" : ""}>Zachovat odečítané obrysy</label>`
+              : ""
+          }<label title="Největší odchylka aproximace oblouku. Přímé hrany zůstávají přesné.">Tolerance<input id="boolean-tolerance" type="number" min="0.001" max="0.1" step="0.001" value="${this.booleanOptions.tolerance}"></label><span class="unit-tag">mm</span><button id="boolean-apply" class="primary-button compact-button" ${pending ? "" : "disabled"}>Použít <span>↵</span></button><button id="boolean-clear" class="quiet-button compact-button" title="Zrušit výběr obrysů">Zrušit výběr</button><button id="boolean-cancel" class="quiet-button compact-button">Zrušit</button>`;
       $("tool-hint").textContent = pending
         ? `${operands.length} obrysů → ${pending.polygons.length} ploch, ${holes} otvorů · Enter potvrdí`
         : this.booleanError;
@@ -1102,12 +1148,24 @@
         this.chooseTool(booleanToolName(e.target.value));
       if ($("boolean-base"))
         $("boolean-base").onchange = (e) => {
+          this.booleanOptions.explicitBaseId = e.target.value;
           this.selection = new Set([
             e.target.value,
             ...[...this.selection].filter((id) => id !== e.target.value),
           ]);
           this.canvas.selected = this.selection;
           this.updateToolUI();
+        };
+      if ($("boolean-swap"))
+        $("boolean-swap").onclick = () => {
+          if (operands.length >= 2) {
+            const list = [...this.selection];
+            const reordered = [list[1], list[0], ...list.slice(2)];
+            this.booleanOptions.explicitBaseId = reordered[0];
+            this.selection = new Set(reordered);
+            this.canvas.selected = this.selection;
+            this.updateToolUI();
+          }
         };
       if ($("boolean-keep"))
         $("boolean-keep").onchange = (e) => {
@@ -1161,13 +1219,70 @@
           if (base[key] !== undefined) region[key] = base[key];
       }
       if (operation === "difference" && isPart(base)) {
-        region.stockPoints = structuredClone(base.stockPoints || base.points);
-        const spec = partSpec(base);
+        const b = Joinery.Geometry.bounds([base]);
+        let stockPts = null;
+        if (
+          Array.isArray(base.stockPoints) &&
+          base.stockPoints.length === 4
+        ) {
+          stockPts = base.stockPoints;
+        } else if (
+          ["panel", "rectangle"].includes(base.type) &&
+          Array.isArray(base.points) &&
+          base.points.length === 4
+        ) {
+          const [pa, pb, pc, pd] = base.points;
+          const w = Joinery.Geometry.distance(pa, pb);
+          const h = Joinery.Geometry.distance(pb, pc);
+          if (
+            w >= 0.01 &&
+            h >= 0.01 &&
+            Math.abs(
+              (pb.x - pa.x) * (pc.x - pb.x) + (pb.y - pa.y) * (pc.y - pb.y),
+            ) <=
+              w * h * 1e-6 &&
+            Joinery.Geometry.distance(
+              Joinery.Geometry.add(pa, {
+                x: pc.x - pb.x,
+                y: pc.y - pb.y,
+              }),
+              pd,
+            ) <= 1e-4
+          ) {
+            stockPts = base.points;
+          }
+        }
+        if (!stockPts) {
+          stockPts = [
+            { x: b.min.x, y: b.min.y },
+            { x: b.max.x, y: b.min.y },
+            { x: b.max.x, y: b.max.y },
+            { x: b.min.x, y: b.max.y },
+          ];
+        }
+        region.stockPoints = structuredClone(stockPts);
+        const spec = partSpec(base) || {};
         region.part = {
-          thickness: spec.thickness,
-          material: spec.material,
-          quantity: spec.quantity,
-          banding: structuredClone(spec.banding),
+          thickness:
+            Number.isFinite(spec.thickness) && spec.thickness > 0
+              ? spec.thickness
+              : 18,
+          material:
+            typeof spec.material === "string" && spec.material
+              ? spec.material
+              : "Neuvedeno",
+          quantity:
+            Number.isInteger(spec.quantity) &&
+            spec.quantity >= 1 &&
+            spec.quantity <= 10000
+              ? spec.quantity
+              : 1,
+          banding:
+            Array.isArray(spec.banding) &&
+            spec.banding.length === 4 &&
+            spec.banding.every((n) => Number.isFinite(n) && n >= 0 && n <= 100)
+              ? structuredClone(spec.banding)
+              : [0, 0, 0, 0],
           ...(spec.materialClass ? { materialClass: spec.materialClass } : {}),
           ...(spec.materialKind ? { materialKind: spec.materialKind } : {}),
           ...Joinery.Materials.marking(spec),
@@ -1709,6 +1824,8 @@
         ["ungroup", "Zrušit skupinu"],
         ["move", "Přesunout"],
         ["copy", "Kopírovat"],
+        ["rotate", "Otočit"],
+        ["mirror", "Zrcadlit"],
         ["offset", "Odsazení"],
         ["array", "Obdélníkové / lineární pole"],
         ["trim", "Oříznout úsečku"],
@@ -1726,8 +1843,15 @@
               (b.onclick = () => {
                 const op = b.dataset.operation;
                 $("app-dialog").close();
-                if (["move", "copy", "trim", "extend", "radius"].includes(op)) {
+                if (["move", "copy", "trim", "extend", "radius", "mirror"].includes(op)) {
                   this.chooseTool(op);
+                  if (op === "mirror") {
+                    const tool = this.toolSystem?.registry?.mirror;
+                    if (tool) {
+                      tool.options.copy = false;
+                      this.toolSystem.renderHUD();
+                    }
+                  }
                   return;
                 }
                 this.operationForm(op);
@@ -1747,6 +1871,38 @@
       }
       if (op === "boolean") {
         this.booleanMenu();
+        return;
+      }
+      if (op === "rotate") {
+        this.formDialog(
+          "Otočit výběr",
+          [
+            {
+              name: "degrees",
+              label: "Úhel (°)",
+              value: 90,
+            },
+          ],
+          (v) => {
+            const deg = +v.degrees;
+            if (!Number.isFinite(deg)) throw new Error("Zadejte platný úhel.");
+            const rad = (deg * Math.PI) / 180;
+            const b = Joinery.Geometry.bounds(this.editableSelection());
+            const pivot = Joinery.Geometry.midpoint(b.min, b.max);
+            return this.commit(() => {
+              for (const e of this.editableSelection()) {
+                Object.assign(
+                  e,
+                  Joinery.Geometry.transformEntity(e, (p) =>
+                    Joinery.Geometry.rotatePoint(p, pivot, rad),
+                  ),
+                );
+              }
+            });
+          },
+          "Otočit",
+          "Otočí vybrané objekty kolem jejich společného středu.",
+        );
         return;
       }
       if (op === "offset")
@@ -1885,7 +2041,7 @@
         m = s.snapModes || {};
       this.dialog(
         "Přichycení",
-        `<div class="dialog-form-fields"><label>Rozteč přichycení (mm)<input id="snap-spacing" type="number" min="0.01" max="100000000" step="any" value="${s.gridSize}"></label>${["endpoint", "midpoint", "center", "intersection", "perpendicular", "parallel"].map((k) => `<label style="flex-direction:row;align-items:center"><input type="checkbox" data-snap-mode="${k}" ${m[k] !== false ? "checked" : ""}>${{ endpoint: "Koncový bod", midpoint: "Střed úsečky", center: "Střed", intersection: "Průsečík", perpendicular: "Kolmice", parallel: "Rovnoběžka" }[k]}</label>`).join("")}</div><p class="dialog-note">Rozteč lze změnit i dole v liště. Zobrazená mřížka se přizpůsobuje přiblížení; rozteč přichycení zůstává pevná.</p>`,
+        `<div class="dialog-form-fields"><label>Rozteč přichycení (mm)<input id="snap-spacing" type="number" min="0.01" max="100000000" step="any" value="${s.gridSize}"></label>${["endpoint", "midpoint", "center", "intersection", "perpendicular", "parallel"].map((k) => `<label style="flex-direction:row;align-items:center"><input type="checkbox" data-snap-mode="${k}" ${m[k] !== false ? "checked" : ""}>${{ endpoint: "Koncový bod", midpoint: "Střed hrany / kvadrant kružnice", center: "Střed", intersection: "Průsečík", perpendicular: "Kolmice", parallel: "Rovnoběžka" }[k]}</label>`).join("")}</div><p class="dialog-note">Rozteč lze změnit i dole v liště. Zobrazená mřížka se přizpůsobuje přiblížení; rozteč přichycení zůstává pevná.</p>`,
         () => {
           $("dialog-form").onsubmit = (e) => {
             e.preventDefault();
@@ -1928,6 +2084,7 @@
         ["Zobrazit celý výkres", "F"],
         ["Mřížka / přichycení", "G / N"],
         ["Posun pohledu", "Mezerník + tažení"],
+        ["Snap mřížky / objektů", "G / N"],
         ["Pravoúhlé kreslení", "Shift"],
         ["Dokončit / uzavřít", "Enter / K"],
         ["Zrušit / smazat", "Esc / Del"],

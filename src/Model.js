@@ -22,6 +22,7 @@
     "region",
     "leader",
     "detail",
+    "crop",
   ];
   function panel(
     x,
@@ -357,6 +358,29 @@
           ))
       )
         throw new Error("Neplatný detail.");
+      if (
+        e.type === "crop" &&
+        (!Array.isArray(e.points) ||
+          e.points.length !== 4 ||
+          !e.points.every(point) ||
+          (e.mode != null && !["include", "exclude"].includes(e.mode)))
+      )
+        throw new Error("Neplatná oblast výkresu.");
+      if (
+        e.dimensionAxis != null &&
+        (e.type !== "dimension" ||
+          ![e.dimensionAxis.x, e.dimensionAxis.y].every(Number.isFinite) ||
+          Math.hypot(e.dimensionAxis.x, e.dimensionAxis.y) < 1e-8 ||
+          Math.hypot(e.dimensionAxis.x, e.dimensionAxis.y) > 1e8)
+      )
+        throw new Error("Neplatný směr kóty.");
+      if (
+        e.rotation != null &&
+        (e.type !== "text" ||
+          !Number.isFinite(e.rotation) ||
+          Math.abs(e.rotation) > 1e10)
+      )
+        throw new Error("Neplatný úhel textu.");
       const materialSpec = e.part || e;
       Joinery.Markings?.validate(e);
       if (
@@ -482,6 +506,7 @@
         angle: 3,
         text: 1,
         radius: 1,
+        crop: 4,
       }[e.type];
       if (
         required &&
@@ -491,7 +516,7 @@
           !e.points.every(point))
       )
         throw new Error("Invalid vertex geometry.");
-      if (["rectangle", "panel"].includes(e.type) && e.points.length !== 4)
+      if (["rectangle", "panel", "crop"].includes(e.type) && e.points.length !== 4)
         throw new Error("Rectangles need exactly four vertices.");
       if (e.type === "panel") {
         const s = panelSize(e);

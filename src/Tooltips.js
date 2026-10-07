@@ -18,6 +18,12 @@
     text: "Umístí text zadaný ve spodní liště.",
     move: "Přesune výběr podle základního a cílového bodu.",
     copy: "Vytvoří nezávislou kopii výběru; skupiny zůstanou pohromadě.",
+    mirror:
+      "Zrcadlí výběr podle osy určené dvěma body. Původní objekty lze ponechat nebo nahradit.",
+    trim: "Klikněte na úsek úsečky, lomené čáry, oblouku nebo kružnice, který chcete odstranit. Hranice dalších objektů určují místo oříznutí.",
+    rotate:
+      "Otočí výběr kolem zvoleného středu. Úhel lze zadat ve spodní liště.",
+    join: "Spojí vybrané hrany nebo uzavřené tvary do jednoho obrysu. Uzavření a toleranci nastavíte ve spodní liště.",
     boolean:
       "Sjednocení, odečtení a průnik uzavřených ploch s náhledem výsledku.",
     edit: "Otočení, zrcadlení, odsazení, pole, seskupení a truhlářské spoje.",

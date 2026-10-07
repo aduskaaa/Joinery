@@ -22,6 +22,8 @@
   // constant screen size creates huge model-space labels and expensive routing.
   // Shrink annotations with geometry instead; export still uses its paper scale.
   const MIN_ANNOTATION_ZOOM = 0.125;
+  const MIN_ZOOM = 0.01,
+    MAX_ZOOM = 100;
   class PickChoice extends Error {
     constructor(candidates, point) {
       super("Vyberte objekt");
@@ -157,9 +159,9 @@
           const pts = [...this.pointers.values()],
             mid = mul(add(pts[0], pts[1]), 0.5);
           this.zoom = Math.max(
-            0.01,
+            MIN_ZOOM,
             Math.min(
-              20,
+              MAX_ZOOM,
               (this.pinch.zoom *
                 Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y)) /
                 this.pinch.distance,
@@ -225,7 +227,7 @@
     }
     zoomAt(p, factor) {
       const world = this.toWorld(p);
-      this.zoom = Math.max(0.01, Math.min(20, this.zoom * factor));
+      this.zoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, this.zoom * factor));
       this.origin = {
         x: p.x - world.x * this.zoom,
         y: p.y + world.y * this.zoom,
@@ -255,7 +257,7 @@
     }
     restore(v) {
       if (v) {
-        this.zoom = v.zoom;
+        this.zoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, v.zoom));
         this.origin = { ...v.origin };
         this.changed();
       } else this.fit();
@@ -395,16 +397,18 @@
             ? distance(p, e.points[0]) <= e.radius * e.factor
             : e.type === "region"
               ? pointInRegion(p, e.polygons)
-              : [
-                  "panel",
-                  "rectangle",
-                  "cutout",
-                  "slot",
-                  "polyline",
-                  "circle",
-                  "drill",
-                ].includes(e.type) &&
-                (e.type !== "polyline" || e.closed) &&
+              : (Joinery.Boolean?.isBooleanShape(e) ||
+                  ([
+                    "panel",
+                    "rectangle",
+                    "cutout",
+                    "slot",
+                    "polyline",
+                    "circle",
+                    "drill",
+                    "arc",
+                  ].includes(e.type) &&
+                    (e.type !== "polyline" || e.closed))) &&
                 pointInPolygon(p, vertices(e)))
         )
           hits.push({ entity: e, d: Infinity });
@@ -622,7 +626,8 @@
           {
             Endpoint: "Koncový bod",
             Grid: "Mřížka",
-            Midpoint: "Střed úsečky",
+            Midpoint: "Střed hrany",
+            Quadrant: "Kvadrant",
             Center: "Střed",
             Intersection: "Průsečík",
             Perpendicular: "Kolmice",
@@ -847,6 +852,7 @@
           -(p.start + sweep),
           true,
         );
+        if (p.closed) ctx.closePath();
       }
       if (p.fill) {
         ctx.save();

@@ -99,6 +99,7 @@
         text(e.points[0], e.text, e.size || 14, {
           anchor: "start",
           orientation: e.orientation || "horizontal",
+          ...(e.rotation != null ? { rotation: e.rotation } : {}),
         }),
       ];
     if (e.type === "dimension") {
@@ -262,6 +263,11 @@
     } else if (e.type === "detail") {
       const dest = e.points[0],
         transform = (p) => add(dest, mul(sub(p, e.center), e.factor));
+      const labelName = e.name || "Detail";
+      const hasScale = /1\s*:\s*\d+/.test(labelName);
+      const labelText = hasScale
+        ? labelName
+        : `${labelName} 1:${e.detailScale || 1}`;
       result = [
         {
           kind: "circle",
@@ -278,7 +284,7 @@
         },
         text(
           add(dest, { x: 0, y: e.radius * e.factor + scale * 5 }),
-          `${e.name || "Detail"} 1:${e.detailScale || 1}`,
+          labelText,
           scale * 2.5,
           { annotation: true },
         ),
@@ -296,6 +302,40 @@
             { ...options, paperScale: scale },
           ),
         );
+    } else if (e.type === "crop") {
+      const isExclude = e.mode === "exclude";
+      const color = isExclude ? "#dc2626" : "#2563eb";
+      const pts = e.points;
+      const minX = Math.min(...pts.map((p) => p.x)),
+        maxY = Math.max(...pts.map((p) => p.y));
+      const tag = `${e.name || "Oblast"} · ${isExclude ? "Vyloučeno z výkresu" : "Zahrnuto na výkres"}`;
+      result = [
+        path(pts, true, {
+          thin: true,
+          lineStyle: "dashed",
+          stroke: color,
+        }),
+        text({ x: minX, y: maxY + scale * 3.5 }, tag, scale * 2.2, {
+          annotation: true,
+          color,
+        }),
+      ];
+      if (isExclude) {
+        result.push(
+          path([pts[0], pts[2]], false, {
+            thin: true,
+            lineStyle: "dashed",
+            stroke: "#dc2626",
+            opacity: 0.4,
+          }),
+          path([pts[1], pts[3]], false, {
+            thin: true,
+            lineStyle: "dashed",
+            stroke: "#dc2626",
+            opacity: 0.4,
+          }),
+        );
+      }
     } else if (e.bulges?.some(Boolean)) {
       result = Joinery.GeometryEngine.GeometryEngine.explode(e).flatMap(
         (child) => rawPrimitives(child, units, options),
@@ -351,7 +391,7 @@
     }
     return result.map((p) => ({
       ...p,
-      stroke: e.stroke,
+      stroke: p.stroke ?? e.stroke,
       lineWeight: p.hatch ? 0.13 : (p.lineWeight ?? e.lineWeight),
       ...(p.hatch ? { opacity: 1 } : {}),
       lineStyle:
@@ -593,6 +633,7 @@
               size: e.size || 14,
               anchor: "start",
               orientation: e.orientation || "horizontal",
+              ...(e.rotation != null ? { rotation: e.rotation } : {}),
             },
             Math.max(4, (e.size || 14) * 0.28),
           );
